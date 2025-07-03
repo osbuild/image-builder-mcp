@@ -85,7 +85,7 @@ class ImageBuilderClient:
         response = requests.request(method, url, headers=headers, json=data, proxies=proxies)
         response.raise_for_status()
         ret = response.json()
-        self.logger.debug(f"Response from {url}: {ret}")
+        self.logger.debug(f"Response from {url}: {json.dumps(ret, indent=2)}")
 
         return ret
 
@@ -238,7 +238,7 @@ class ImageBuilderMCP(FastMCP):
         """Get the client ID and secret preferably from the headers."""
         client_id = headers.get("x-client-id") or self.client_id
         client_secret = headers.get("x-client-secret") or self.client_secret
-        self.logger.debug(f"request headers: {headers}")
+        self.logger.debug(f"get_client_id_and_secret request headers: {headers}")
 
         if not client_id or not client_secret:
             raise ValueError("Client ID and secret are required to access the Image Builder API")
@@ -261,24 +261,24 @@ class ImageBuilderMCP(FastMCP):
     def no_auth_error(self, e: Exception) -> str:
         if self.transport == "sse":
             return f"[INSTRUCTION] Tell the user that the MCP server setup is not valid!" \
-                    "The user should to go to [https://console.redhat.com](https://console.redhat.com) to `'YOUR USER' ➡ My User Access ➡ Service Accounts` "\
+                    "The user should to go to [https://console.redhat.com](https://console.redhat.com) to `'YOUR USER' ➡ My User Access ➡ Service Accounts` " \
                     "create a service account and then set the " \
                     "header variables `x-client-ID` and `x-client-secret` in your request.\n" \
                     "Here is the direct link for the user's convenience: [https://console.redhat.com/iam/service-accounts](https://console.redhat.com/iam/service-accounts) " \
                     "Come up with a detailed description of this for the user. " \
                     "Only describe this, don't expose details about the tool function itself." \
                     "Don't proceed with the request before this is fixed." \
-                    "Error: {str(e)}."
+                    f"Error: {str(e)}."
         else:
             return f"[INSTRUCTION] Tell the user that the MCP server setup is not valid!" \
-                    "The user should to go to [https://console.redhat.com](https://console.redhat.com) to `'YOUR USER' ➡ My User Access ➡ Service Accounts` "\
+                    "The user should to go to [https://console.redhat.com](https://console.redhat.com) to `'YOUR USER' ➡ My User Access ➡ Service Accounts` " \
                     "create a service account and then set the " \
                     "`IMAGE_BUILDER_CLIENT_ID` and `IMAGE_BUILDER_CLIENT_SECRET` in your mcp.json config.\n" \
                     "Here is the direct link for the user's convenience: [https://console.redhat.com/iam/service-accounts](https://console.redhat.com/iam/service-accounts) " \
                     "Come up with a detailed description of this for the user. " \
                     "Only describe this, don't expose details about the tool function itself." \
                     "Don't proceed with the request before this is fixed." \
-                    "Error: {str(e)}."
+                    f"Error: {str(e)}."
 
     def compose(self,
                 distribution: str,
@@ -698,7 +698,8 @@ class ImageBuilderMCP(FastMCP):
         except Exception as e:
             return f"Error: {str(e)}"
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the Image Builder MCP server."""
     parser = argparse.ArgumentParser(description="Run Image Builder MCP server.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--stage", action="store_true", help="Use stage API instead of production API")
@@ -744,3 +745,7 @@ if __name__ == "__main__":
         mcp_server.run(transport="sse", host=args.host, port=args.port)
     else:
         mcp_server.run()
+
+
+if __name__ == "__main__":
+    main()

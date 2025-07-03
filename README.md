@@ -12,16 +12,22 @@ and then set the environment variables `IMAGE_BUILDER_CLIENT_ID` and `IMAGE_BUIL
 ## Run
 
 ### Using Python directly
-Just install the requirements
+Install the package in development mode:
 
 ```
-pip install -r requirements.txt
+pip install -e .
 ```
 
-and run
+Then run using either:
 
 ```
-python image-builder-mcp.py sse
+python -m image_builder_mcp sse
+```
+
+or using the CLI entry point:
+
+```
+image-builder-mcp sse
 ```
 
 This will start image-builder-mcp server at http://localhost:9000/sse

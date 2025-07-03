@@ -1,16 +1,25 @@
-FROM registry.access.redhat.com/ubi9/python-312
+# Build stage
+FROM registry.access.redhat.com/ubi9/python-312 AS builder
 
 # Set up a working directory
 WORKDIR /app
 
-# Copy the requirements file
-COPY requirements.txt .
+# Copy the project configuration and required files
+COPY pyproject.toml README.md LICENSE ./
+COPY src/ ./src/
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Temporarily switch to root for installation
+USER root
 
-# Copy the rest of the application
-COPY . .
+# Install the package and its dependencies
+RUN pip install --no-cache-dir .
+
+# Runtime stage
+FROM registry.access.redhat.com/ubi9/python-312
+
+# Copy the installed packages from the builder stage
+COPY --from=builder /opt/app-root/lib/python3.12/site-packages/ /opt/app-root/lib/python3.12/site-packages/
+COPY --from=builder /opt/app-root/bin/ /opt/app-root/bin/
 
 # Command to run the application
-ENTRYPOINT ["python", "image-builder-mcp.py"]
+ENTRYPOINT ["python", "-m", "image_builder_mcp"]

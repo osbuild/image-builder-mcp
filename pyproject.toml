@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image-builder-mcp"
+version = "0.1.0"
+description = "A Model Context Protocol server for Red Hat Image Builder"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Florian Schüller", email = "fschulle@redhat.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "fastmcp>=2.10.1",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+]
+
+[project.scripts]
+image-builder-mcp = "image_builder_mcp.main:main"
+
+[project.urls]
+Homepage = "https://github.com/schuellerf/image-builder-mcp"
+Repository = "https://github.com/schuellerf/image-builder-mcp"
+Issues = "https://github.com/schuellerf/image-builder-mcp/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src" 
