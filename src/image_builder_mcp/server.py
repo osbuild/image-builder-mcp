@@ -337,7 +337,7 @@ class ImageBuilderMCP(FastMCP):
             for blueprint in sorted_data:
                 data = {"reply_id": i,
                         "blueprint_uuid": blueprint["id"],
-                        "UI_URL": f"https://{client.domain}/insights/image-builder/imagewizard/{blueprint["id"]}",
+                        "UI_URL": f"https://{client.domain}/insights/image-builder/imagewizard/{blueprint['id']}",
                         "name": blueprint["name"]}
 
                 self.blueprints[client.client_id].append(data)
