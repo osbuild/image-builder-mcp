@@ -2,7 +2,7 @@ import json
 import logging
 import requests
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 class ImageBuilderClient:
@@ -55,7 +55,12 @@ class ImageBuilderClient:
 
         return self.token
 
-    def make_request(self, endpoint: str, method: str = "GET", data: Optional[Dict] = None) -> Dict[str, Any]:
+    def make_request(
+            self,
+            endpoint: str,
+            method: str = "GET",
+            data: Optional[Dict] = None
+        ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """Make an authenticated request to the Image Builder API."""
         headers = {
             "Content-Type": "application/json",

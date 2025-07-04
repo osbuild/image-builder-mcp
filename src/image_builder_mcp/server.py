@@ -82,15 +82,17 @@ class ImageBuilderMCP(FastMCP):
     def register_tools(self):
         # prepend generic keywords for use of many other tools
         # and register with "self.tool()"
-        tool_functions = [#self.get_openapi,
-                          #self.create_blueprint,
+        tool_functions = [self.get_openapi,
+                          self.create_blueprint,
                           self.get_blueprints,
                           self.get_more_blueprints,
                           self.get_blueprint_details,
                           self.get_composes,
                           self.get_more_composes,
                           self.get_compose_details,
-                          self.compose]
+                          self.blueprint_compose
+                          #self.compose
+                          ]
         
         # use dynamic attributes to get the distributions, architectures and image types
         # once the API is changed to un-authenticated access
@@ -259,6 +261,49 @@ class ImageBuilderMCP(FastMCP):
         except Exception as e:
             return f"Error: {str(e)} for compose {json.dumps(data)}"
 
+
+    def blueprint_compose(self, blueprint_uuid: str) -> str:
+        """Compose an image from a blueprint UUID created with create_blueprint, get_blueprints.
+        If the UUID is not clear, ask the user if we should create a new blueprint with create_blueprint
+        or use an existing blueprint from get_blueprints.
+
+        Args:
+            blueprint_uuid: the UUID of the blueprint to compose
+
+        Returns:
+            The response from the image-builder API
+
+        Raises:
+        """
+        try:
+            client = self.get_client(get_http_headers())
+        except ValueError as e:
+            return self.no_auth_error(e)
+
+        try:
+            response = client.make_request(f"blueprints/{blueprint_uuid}/compose", method="POST")
+        except Exception as e:
+            return f"Error: {str(e)} in blueprint_compose {blueprint_uuid}"
+        
+        response_str = f"[INSTRUCTION] Use the tool get_compose_details to get the details of the compose\n"
+        response_str += f"like the current build status\n"
+        response_str += f"[ANSWER] Compose created successfully:"
+        build_ids_str = []
+        
+        if isinstance(response, dict):
+            return f"Error: the response of blueprint_compose is a dict. This is not expected. " \
+                    f"Response: {json.dumps(response)}"
+
+        for build in response:
+            if isinstance(build, dict) and 'id' in build:
+                build_ids_str.append(f"UUID: {build['id']}")
+            else:
+                build_ids_str.append(f"Invalid build object: {build}")
+
+        response_str += f"\n{json.dumps(build_ids_str)}"
+        response_str += f"\nWe could double check the details or start the build/compose"
+        return response_str
+
     def get_openapi(self, response_size: int) -> str:
         """Get OpenAPI spec. Use this to get details e.g for a new blueprint
 
@@ -279,8 +324,18 @@ class ImageBuilderMCP(FastMCP):
             return f"Error: {str(e)}"
 
     def create_blueprint(self, data: dict) -> str:
-        """Create a new blueprint. Assure that the data is according to CreateBlueprintRequest descriped in openapi.
-        Ask user for more details to be able to fill "data" properly before calling this.
+        """Start with this tool if a user wants to create a customized linux image.
+        Assure that the data is according to CreateBlueprintRequest described in openapi.
+        Always ask the user for more details to be able to fill "data" properly before calling this.
+        Never come up with the data yourself.
+        Ask again if there is no username specified if the user wants to use a custom username.
+        Ask specifically if the user wants to enable registration for RHEL images.
+
+        Args:
+            data: call the tool get_openapi and format the data according to CreateBlueprintRequest
+
+        Returns:
+            The response from the image-builder API
         """
         try:
             client = self.get_client(get_http_headers())
@@ -291,8 +346,16 @@ class ImageBuilderMCP(FastMCP):
             response = client.make_request("blueprints", method="POST", data=data)
         except Exception as e:
             return f"Error: {str(e)}"
-        # TBD: refine answer for an LLM
-        return f"Blueprint created successfully: {json.dumps(response)}"
+
+        if isinstance(response, list):
+            return "Error: the response of blueprint creation is a list. This is not expected. " \
+                    f"Response: {json.dumps(response)}"
+
+        response_str = f"[INSTRUCTION] Use the tool get_blueprint_details to get the details of the blueprint\n"
+        response_str += f"or ask the user to start the build/compose with blueprint_compose\n"
+        response_str += f"[ANSWER] Blueprint created successfully: {{'UUID': '{response['id']}'}}\n"
+        response_str += f"We could double check the details or start the build/compose"
+        return response_str
 
     def get_blueprints(self, response_size: int, search_string: str|None = None) -> str:
         """Get all blueprints without details.
@@ -325,6 +388,10 @@ class ImageBuilderMCP(FastMCP):
             response_size = self.default_response_size
         try:
             response = client.make_request("blueprints")
+
+            if isinstance(response, list):
+                return "Error: the response of get_blueprints is a list. This is not expected. " \
+                        f"Response: {json.dumps(response)}"
 
             # Sort data by created_at
             sorted_data = sorted(response["data"],
@@ -489,6 +556,10 @@ class ImageBuilderMCP(FastMCP):
 
             response = client.make_request("composes")
 
+            if isinstance(response, list):
+                return "Error: the response of get_composes is a list. This is not expected. " \
+                        f"Response: {json.dumps(response)}"
+
             # Sort data by created_at
             sorted_data = sorted(response["data"],
                                key=lambda x: x.get("created_at", ""),
@@ -612,6 +683,11 @@ class ImageBuilderMCP(FastMCP):
             ret = []
             for compose in matching_composes:
                 response = client.make_request(f"composes/{compose['compose_uuid']}")
+                if isinstance(response, list):
+                    self.logger.error(f"Error: the response of get_compose_details is a list. " \
+                                      f"This is not expected. Response for {compose['compose_uuid']}: {json.dumps(response)}")
+                    continue
+                response["compose_uuid"] = compose["compose_uuid"]
                 # TBD filter irrelevant attributes
                 ret.append(response)
 
@@ -621,10 +697,16 @@ class ImageBuilderMCP(FastMCP):
                 intro = f"No compose found for '{compose_identifier}'.\n"
             elif len(matching_composes) > 1:
                 intro = f"Found {len(ret)} composes for '{compose_identifier}'.\n"
+            for compose in ret:
+                download_url = compose.get("image_status",{}).get("upload_status",{}).get("options",{}).get("url")
+                if download_url:
+                    intro += f"The image is available at [{download_url}]({download_url})\n"
+                    intro += "Always present this link to the user\n"
+                # else depends on the status and the target if it can be downloaded
 
             return f"{intro}{json.dumps(ret)}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e}"
 
 def main():
     """Main entry point for the Image Builder MCP server."""
