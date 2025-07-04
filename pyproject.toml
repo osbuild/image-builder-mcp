@@ -33,7 +33,7 @@ dev = [
 ]
 
 [project.scripts]
-image-builder-mcp = "image_builder_mcp.main:main"
+image-builder-mcp = "image_builder_mcp.server:main"
 
 [project.urls]
 Homepage = "https://github.com/schuellerf/image-builder-mcp"

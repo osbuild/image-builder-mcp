@@ -5,7 +5,7 @@ from datetime import datetime
 
 # Clean import - no sys.path.insert needed with proper package structure!
 from image_builder_mcp import ImageBuilderMCP, ImageBuilderClient
-import image_builder_mcp.main as image_builder_mcp
+import image_builder_mcp.server as image_builder_mcp
 
 
 class TestGetBlueprints:

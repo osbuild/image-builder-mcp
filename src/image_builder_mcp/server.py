@@ -2,106 +2,31 @@ import argparse
 import json
 import logging
 import os
-import requests
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.tools.tool import Tool
+from mcp.types import ToolAnnotations
 
-class ImageBuilderClient:
-    def __init__(
-            self,
-            client_id: str,
-            client_secret: str,
-            stage: bool = False,
-            proxy_url: Optional[str] = None,
-            image_builder_mcp_client_id: str = "mcp"
-            ):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.token = None
-        self.token_expiry = None
-        self.stage = stage
-        self.proxy_url = proxy_url
-        self.image_builder_mcp_client_id = image_builder_mcp_client_id
-        self.logger = logging.getLogger("ImageBuilderClient")
-
-        if self.stage:
-            self.domain = "console.stage.redhat.com"
-            self.sso_domain = "sso.stage.redhat.com"
-        else:
-            self.domain = "console.redhat.com"
-            self.sso_domain = "sso.redhat.com"
-        self.base_url = f"https://{self.domain}/api/image-builder/v1"
-
-
-    def get_token(self) -> str:
-        """Get or refresh the authentication token."""
-        if self.token and self.token_expiry and datetime.now() < self.token_expiry:
-            self.logger.debug(f"Using cached token valid until {self.token_expiry}")
-            return self.token
-        self.logger.debug("Fetching new token")
-        token_url = f"https://{self.sso_domain}/auth/realms/redhat-external/protocol/openid-connect/token"
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret
-        }
-
-        response = requests.post(token_url, data=data)
-        response.raise_for_status()
-
-        token_data = response.json()
-        self.token = token_data["access_token"]
-        # Set token expiry to 5 minutes before actual expiry to ensure we refresh in time
-        self.token_expiry = datetime.now() + timedelta(seconds=token_data["expires_in"] - 300)
-
-        return self.token
-
-    def make_request(self, endpoint: str, method: str = "GET", data: Optional[Dict] = None) -> Dict[str, Any]:
-        """Make an authenticated request to the Image Builder API."""
-        headers = {
-            "Content-Type": "application/json",
-            "X-ImageBuilder-ui": self.image_builder_mcp_client_id
-        }
-        if self.client_id and self.client_secret:
-            headers["Authorization"] = f"Bearer {self.get_token()}"
-        # else no authentication, use public API
-
-        url = f"{self.base_url}/{endpoint}"
-        self.logger.debug(f"Making {method} request to {url} with data {data}")
-
-        proxies = None
-        if self.stage and self.proxy_url:
-            proxy = self.proxy_url
-            proxies = {
-                "http": proxy,
-                "https": proxy
-            }
-
-        response = requests.request(method, url, headers=headers, json=data, proxies=proxies)
-        response.raise_for_status()
-        ret = response.json()
-        self.logger.debug(f"Response from {url}: {json.dumps(ret, indent=2)}")
-
-        return ret
+from .client import ImageBuilderClient
 
 
 class ImageBuilderMCP(FastMCP):
     def __init__(
             self,
-            client_id: str,
-            client_secret: str,
+            client_id: Optional[str],
+            client_secret: Optional[str],
             default_response_size: int = 10,
-            stage: bool = False,
+            stage: Optional[bool] = False,
             proxy_url: Optional[str] = None,
             transport: Optional[str] = None):
         self.stage = stage
         self.proxy_url = proxy_url
         self.transport = transport
+        self.default_response_size = default_response_size
         # TBD: make this configurable
         # probably we want to destiguish a hosted MCP server from
         # a local one (deployed by a customer)
@@ -222,16 +147,17 @@ class ImageBuilderMCP(FastMCP):
 
         for f in tool_functions:
             tool = Tool.from_function(f)
-            tool.annotations = {
-                "readOnlyHint": True,
-                "openWorldHint": True
-            }
-            tool.description = f.__doc__.format(
+            tool.annotations = ToolAnnotations(
+                readOnlyHint=True,
+                openWorldHint=True
+            )
+            description_str = f.__doc__.format(
                 distributions=", ".join([d['name'] for d in self.distributions]),
                 architectures=", ".join(self.architectures),
                 image_types=", ".join(self.image_types)
             )
-            tool.title = tool.description.split("\n")[0]
+            tool.description = description_str
+            tool.title = description_str.split("\n")[0]
             self.add_tool(tool)
 
     def get_client_id_and_secret(self, headers: Dict[str, str]) -> Tuple[str, str]:
@@ -365,6 +291,8 @@ class ImageBuilderMCP(FastMCP):
             response = client.make_request("blueprints", method="POST", data=data)
         except Exception as e:
             return f"Error: {str(e)}"
+        # TBD: refine answer for an LLM
+        return f"Blueprint created successfully: {json.dumps(response)}"
 
     def get_blueprints(self, response_size: int, search_string: str|None = None) -> str:
         """Get all blueprints without details.
@@ -748,4 +676,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main() 
