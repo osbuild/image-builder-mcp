@@ -93,12 +93,18 @@ the following content.
 
 ### Cursor
 
+Try the one-click installer
+
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=image-builder-mcp&config=JTdCJTIydHlwZSUyMiUzQSUyMnN0ZGlvJTIyJTJDJTIyY29tbWFuZCUyMiUzQSUyMnBvZG1hbiUyMHJ1biUyMC0tZW52JTIwSU1BR0VfQlVJTERFUl9DTElFTlRfSUQlMjAtLWVudiUyMElNQUdFX0JVSUxERVJfQ0xJRU5UX1NFQ1JFVCUyMC0taW50ZXJhY3RpdmUlMjAtLXJtJTIwZ2hjci5pbyUyRnNjaHVlbGxlcmYlMkZpbWFnZS1idWlsZGVyLW1jcCUzQWxhdGVzdCUyMiUyQyUyMmVudiUyMiUzQSU3QiUyMlJFTU9WRVBSRUZJWF9JTUFHRV9CVUlMREVSX0NMSUVOVF9JRCUyMiUzQSUyMllPVVJfSUQlMjBoZXJlJTJDJTIwdGhlbiUyMHJlbW92ZSUyMCdSRU1PVkVQUkVGSVhfJyUyMiUyQyUyMlJFTU9WRVBSRUZJWF9JTUFHRV9CVUlMREVSX0NMSUVOVF9TRUNSRVQlMjIlM0ElMjJZT1VSX1NFQ1JFVCUyMGhlcmUlMkMlMjB0aGVuJTIwcmVtb3ZlJTIwJ1JFTU9WRVBSRUZJWF8nJTIyJTdEJTdE)
+
+or continue reading and install the config manually.
+
 Cursor doesn't seem to support `inputs` you need to add your credentials in the config file.
 To start the integration create a file `~/.cursor/mcp.json` with
 ```
 {
   "mcpServers": {
-    "image-builder-mcp-stdio": {
+    "image-builder-mcp": {
         "type": "stdio",
         "command": "podman",
         "args": [
@@ -112,8 +118,8 @@ To start the integration create a file `~/.cursor/mcp.json` with
             "ghcr.io/schuellerf/image-builder-mcp:latest"
         ],
         "env": {
-            "IMAGE_BUILDER_CLIENT_ID": "YOUR_ID HERE",
-            "IMAGE_BUILDER_CLIENT_SECRET": "YOUR_SECRET HERE"
+            "REMOVEPREFIX_IMAGE_BUILDER_CLIENT_ID": "YOUR_ID here, then remove 'REMOVEPREFIX_'",
+            "REMOVEPREFIX_IMAGE_BUILDER_CLIENT_SECRET": "YOUR_SECRET here, then remove 'REMOVEPREFIX_'"
         }
     }
   }
