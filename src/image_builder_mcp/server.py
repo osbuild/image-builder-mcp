@@ -168,11 +168,6 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         self.client_id = None
         self.client_secret = None
 
-        self.blueprints: Dict[str, list] = {}
-        self.composes: Dict[str, list] = {}
-        self.blueprint_current_index: Dict[str, int] = {}
-        self.compose_current_index: Dict[str, int] = {}
-
         if client_id and client_secret:
             self.clients[client_id] = ImageBuilderClient(
                 client_id,
@@ -194,10 +189,8 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         tool_functions = [self.get_openapi,
                           self.create_blueprint,
                           self.get_blueprints,
-                          self.get_more_blueprints,
                           self.get_blueprint_details,
                           self.get_composes,
-                          self.get_more_composes,
                           self.get_compose_details,
                           self.blueprint_compose
                           # self.compose
@@ -221,7 +214,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
 
     def get_client_id(self, headers: Dict[str, str]) -> str:
         """Get the client ID preferably from the headers."""
-        client_id = ""
+        client_id = self.client_id or ""
         if self.oauth_enabled:
             caller_headers_auth = headers.get("authorization")
             if caller_headers_auth and caller_headers_auth.startswith("Bearer "):
@@ -478,12 +471,13 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         """Get the URL for a blueprint."""
         return f"https://{client.domain}/insights/image-builder/imagewizard/{blueprint_id}"
 
-    def get_blueprints(self, response_size: int, search_string: str | None = None) -> str:
+    def get_blueprints(self, limit: int = 7, offset: int = 0, search_string: str | None = None) -> str:
         """EXECUTE: Show user's image blueprints (saved image templates/configurations for
         Linux distributions, packages, users).
 
         Args:
-            response_size: number of items returned (use 7 as default)
+            limit: maximum number of items to return (default: 7)
+            offset: number of items to skip (default: 0)
             search_string: substring to search for in the name (optional)
 
         Returns:
@@ -495,18 +489,17 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         except ValueError as e:
             return self.no_auth_error(e)
 
-        # Extract client_id for dictionary indexing
-        client_id = str(client.client_id)  # Explicit type annotation for mypy
-
         # workaround seen in LLama 3.3 70B Instruct
         if search_string == "null":
             search_string = None
 
-        response_size = response_size or self.default_response_size
-        if response_size <= 0:
-            response_size = self.default_response_size
+        limit = limit or self.default_response_size
+        if limit <= 0:
+            limit = self.default_response_size
         try:
-            response = client.make_request("blueprints")
+            # Make request with limit and offset parameters
+            params = {"limit": limit, "offset": offset}
+            response = client.make_request("blueprints", params=params)
 
             if isinstance(response, list):
                 return "Error: the response of get_blueprints is a list. This is not expected. " \
@@ -518,84 +511,21 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
                                  reverse=True)
 
             ret: list[dict] = []
-            i = 1
-            self.blueprints[client_id] = []
-            for blueprint in sorted_data:
-                data = {"reply_id": i,
+            for i, blueprint in enumerate(sorted_data, 1):
+                data = {"reply_id": i + offset,
                         "blueprint_uuid": blueprint["id"],
                         "UI_URL": self.get_blueprint_url(client, blueprint["id"]),
                         "name": blueprint["name"]}
 
-                self.blueprints[client_id].append(data)
-
-                if len(ret) < response_size:
-                    if search_string:
-                        if search_string.lower() in data["name"].lower():
-                            ret.append(data)
-                    else:
+                # Apply search filter if provided
+                if search_string:
+                    if search_string.lower() in data["name"].lower():
                         ret.append(data)
+                else:
+                    ret.append(data)
 
-                i += 1
-            self.blueprint_current_index[client_id] = min(
-                i, response_size+1)
             intro = "[INSTRUCTION] Use the UI_URL to link to the blueprint\n"
             intro += "[ANSWER]\n"
-            if len(self.blueprints[client_id]) > len(ret):
-                intro += f"Only {len(ret)} out of {len(self.blueprints[client_id])} returned. Ask for more if needed:"
-            else:
-                intro += f"All {len(ret)} entries. There are no more."
-            return f"{intro}\n{json.dumps(ret)}"
-        # avoid crashing the server so we'll stick to the broad exception catch
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            return f"Error: {str(e)}"
-
-    def get_more_blueprints(self, response_size: int, search_string: str | None = None) -> str:
-        """Get more blueprints without details.
-
-        Args:
-            response_size: number of items returned (use 7 as default)
-            search_string: substring to search for in the name (optional)
-
-        Returns:
-            List of blueprints
-
-        Raises:
-            Exception: If the image-builder connection fails.
-        """
-        response_size = response_size or self.default_response_size
-        if response_size <= 0:
-            response_size = self.default_response_size
-        try:
-            try:
-                client_id = self.get_client_id(get_http_headers())
-            except ValueError as e:
-                return self.no_auth_error(e)
-
-            if not self.blueprints[client_id]:
-                self.get_blueprints(response_size, search_string)
-
-            if self.blueprint_current_index[client_id] >= len(self.blueprints[client_id]):
-                return "There are no more blueprints. Should I start a fresh search with get_blueprints?"
-
-            i = 1
-            ret: list[dict] = []
-            for blueprint in self.blueprints[client_id]:
-                i += 1
-                if i > self.blueprint_current_index[client_id] and len(ret) < response_size:
-                    if search_string:
-                        if search_string.lower() in blueprint["name"].lower():
-                            ret.append(blueprint)
-                    else:
-                        ret.append(blueprint)
-
-            self.blueprint_current_index[client_id] = min(
-                self.blueprint_current_index[client_id] + len(ret), len(self.blueprints[client_id]))
-
-            intro = ""
-            if len(self.blueprints[client_id]) > len(ret):
-                intro = f"Only {len(ret)} out of {len(self.blueprints[client_id])} returned. Ask for more if needed:"
-            else:
-                intro = f"All {len(ret)} entries. There are no more."
             return f"{intro}\n{json.dumps(ret)}"
         # avoid crashing the server so we'll stick to the broad exception catch
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -616,52 +546,23 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         if not blueprint_identifier:
             return "Error: a blueprint identifier is required"
         try:
+            client = self.get_client(get_http_headers())
+        except ValueError as e:
+            return self.no_auth_error(e)
 
-            try:
-                client = self.get_client(get_http_headers())
-            except ValueError as e:
-                return self.no_auth_error(e)
-
-            try:
-                client_id = self.get_client_id(get_http_headers())
-            except ValueError as e:
-                return self.no_auth_error(e)
-
-            # At this point, client_id is guaranteed to be a string
-            client_id = str(client_id)  # Explicit type annotation for mypy
-            if not self.blueprints[client_id]:
-                # get one blueprint as this just updates the index
-                self.get_blueprints(1)
-
-            # Find matching blueprints using filter
-            matching_blueprints = list(filter(
-                lambda b: (b["name"] == blueprint_identifier or
-                           b["blueprint_uuid"] == blueprint_identifier or
-                           str(b["reply_id"]) == blueprint_identifier),
-                self.blueprints[client_id]
-            ))
-
-            # Get details for each matching blueprint
-            ret: list[dict] = []
-            for blueprint in matching_blueprints:
-                response = client.make_request(
-                    f"blueprints/{blueprint['blueprint_uuid']}")
-                # TBD filter irrelevant attributes
+        try:
+            # If the identifier looks like a UUID, use it directly
+            if len(blueprint_identifier) == 36 and blueprint_identifier.count('-') == 4:
+                response = client.make_request(f"blueprints/{blueprint_identifier}")
                 if isinstance(response, dict):
-                    ret.append(response)
-                else:
-                    # Handle unexpected list response
-                    ret.append(
-                        {"error": "Unexpected list response", "data": response})
+                    return json.dumps([response])
 
-            # Prepare response message
-            intro = ""
-            if len(matching_blueprints) == 0:
-                intro = f"No blueprint found for '{blueprint_identifier}'.\n"
-            elif len(matching_blueprints) > 1:
-                intro = f"Found {len(ret)} blueprints for '{blueprint_identifier}'.\n"
-
-            return f"{intro}{json.dumps(ret)}"
+                return json.dumps([{"error": "Unexpected list response", "data": response}])
+            ret = f"[INSTRUCTION] Error: {blueprint_identifier} is not a valid blueprint identifier,"
+            ret += "please use the UUID from get_blueprints\n"
+            ret += "[INSTRUCTION] retry calling get_blueprints\n\n"
+            ret += f"[ANSWER] {blueprint_identifier} is not a valid blueprint identifier"
+            return ret
         # avoid crashing the server so we'll stick to the broad exception catch
         except Exception as e:  # pylint: disable=broad-exception-caught
             return f"Error: {str(e)}"
@@ -690,8 +591,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         return search_string.lower() in data["image_name"].lower()
 
     # NOTE: the _doc_ has escaped curly braces as __doc__.format() is called on the docstring
-
-    def get_composes(self, response_size: int, search_string: str | None = None) -> str:
+    def get_composes(self, limit: int = 7, offset: int = 0, search_string: str | None = None) -> str:
         """Get a list of all image builds (composes) with their UUIDs and basic status.
 
         **ALWAYS USE THIS FIRST** when checking image build status or finding builds.
@@ -701,10 +601,12 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         - Check status of recent builds → call this first
         - Find your latest build → call this first
         - Get any build information → call this first
+        Ask the user if they want to get more composes and adapt "offset" accordingly.
 
         Args:
-            response_size: number of items returned (use 7 as default)
-            search_string: optional filter by name substring
+            limit: maximum number of items to return (default: 7)
+            offset: number of items to skip (default: 0)
+            search_string: substring to search for in the name (optional)
 
         Returns:
             List of composes with:
@@ -723,17 +625,15 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             }}
         ]
         """
-        response_size = response_size or self.default_response_size
-        if response_size <= 0:
-            response_size = self.default_response_size
+        limit = limit or self.default_response_size
+        if limit <= 0:
+            limit = self.default_response_size
         try:
             client = self.get_client(get_http_headers())
 
-            # Extract client_id for dictionary indexing
-            # Explicit type annotation for mypy
-            client_id = str(client.client_id)
-
-            response = client.make_request("composes")
+            # Make request with limit and offset parameters
+            params = {"limit": limit, "offset": offset}
+            response = client.make_request("composes", params=params)
 
             if isinstance(response, list):
                 return (f"Error: the response of get_composes is a list. This is not expected. "
@@ -745,87 +645,20 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
                                  reverse=True)
 
             ret: list[dict] = []
-            self.composes[client_id] = []
-
             for i, compose in enumerate(sorted_data, 1):
-                data = self._create_compose_data(compose, i, client)
-                self.composes[client_id].append(data)
+                data = self._create_compose_data(compose, i + offset, client)
 
-                # Add to return list if we haven't reached the limit and it matches search criteria
-                if len(ret) < response_size and self._should_include_compose(data, search_string):
+                # Apply search filter if provided
+                if self._should_include_compose(data, search_string):
                     ret.append(data)
-
-            self.compose_current_index[client_id] = min(len(sorted_data), response_size) + 1
 
             intro = ("[INSTRUCTION] Present a bulleted list and use the blueprint_url to link to the "
                      "blueprint which created this compose\n")
-            if len(self.composes[client_id]) > len(ret):
-                intro += (f"Only {len(ret)} out of {len(self.composes[client_id])} "
-                          f"returned. Ask for more if needed:")
-            else:
-                intro += f"All {len(ret)} entries. There are no more."
+            intro += "[ANSWER]\n"
             return f"{intro}\n{json.dumps(ret)}"
 
         except ValueError as e:
             return self.no_auth_error(e)
-        # avoid crashing the server so we'll stick to the broad exception catch
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            return f"Error: {str(e)}"
-
-    def get_more_composes(self, response_size: int, search_string: str | None = None) -> str:
-        """Get more composes without details.
-
-        Args:
-            response_size: number of items returned (use 7 as default)
-            search_string: substring to search for in the name (optional)
-
-        Returns:
-            List of composes
-
-        Raises:
-            Exception: If the image-builder connection fails.
-        """
-        response_size = response_size or self.default_response_size
-        if response_size <= 0:
-            response_size = self.default_response_size
-        try:
-            try:
-                client_id = self.get_client_id(get_http_headers())
-            except ValueError as e:
-                return self.no_auth_error(e)
-
-            # At this point, client_id is guaranteed to be a string
-            client_id = str(client_id)  # Explicit type annotation for mypy
-            if not self.composes[client_id]:
-                self.get_composes(response_size, search_string)
-
-            if self.compose_current_index[client_id] >= len(self.composes[client_id]):
-                return "There are no more composes. Should I start a fresh search?"
-
-            # Filter composes if search_string is provided
-            filtered_composes = self.composes[client_id]
-            if search_string:
-                search_lower = search_string.lower()
-                filtered_composes = list(filter(
-                    lambda c: search_lower in c.get("image_name", "").lower(),
-                    self.composes[client_id]
-                ))
-
-            # Get the next batch of items
-            start_index = self.compose_current_index[client_id]
-            end_index = start_index + response_size
-            ret = filtered_composes[start_index:end_index]
-            self.compose_current_index[client_id] = min(
-                self.compose_current_index[client_id] + len(ret), len(self.composes[client_id]))
-
-            # Prepare response message
-            intro = ""
-            if len(filtered_composes) > self.compose_current_index[client_id]:
-                intro = f"Only {len(ret)} out of {len(filtered_composes)} returned. Ask for more if needed:"
-            else:
-                intro = f"All {len(ret)} entries. There are no more."
-
-            return f"{intro}\n{json.dumps(ret)}"
         # avoid crashing the server so we'll stick to the broad exception catch
         except Exception as e:  # pylint: disable=broad-exception-caught
             return f"Error: {str(e)}"
@@ -857,59 +690,36 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         if not compose_identifier:
             return "Error: Compose UUID is required"
         try:
-            try:
-                client = self.get_client(get_http_headers())
-            except ValueError as e:
-                return self.no_auth_error(e)
+            client = self.get_client(get_http_headers())
+        except ValueError as e:
+            return self.no_auth_error(e)
 
-            try:
-                client_id = self.get_client_id(get_http_headers())
-            except ValueError as e:
-                return self.no_auth_error(e)
-
-            # At this point, client_id is guaranteed to be a string
-            client_id = str(client_id)  # Explicit type annotation for mypy
-            if not self.composes.get(client_id):
-                # get one compose as this just updates the index
-                self.get_composes(self.default_response_size)
-
-            # Find matching composes using filter
-            matching_composes = list(filter(
-                lambda c: (c["image_name"] == compose_identifier or
-                           c["compose_uuid"] == compose_identifier or
-                           str(c["reply_id"]) == compose_identifier),
-                self.composes[client_id]
-            ))
-
-            # Get details for each matching compose
-            ret: list[dict] = []
-            for compose in matching_composes:
-                response = client.make_request(
-                    f"composes/{compose['compose_uuid']}")
+        try:
+            # If the identifier looks like a UUID, use it directly
+            if len(compose_identifier) == 36 and compose_identifier.count('-') == 4:
+                response = client.make_request(f"composes/{compose_identifier}")
                 if isinstance(response, list):
                     self.logger.error(
                         "Error: the response of get_compose_details is a list. "
                         "This is not expected. Response for %s: %s",
-                        compose['compose_uuid'], json.dumps(response))
-                    continue
-                response["compose_uuid"] = compose["compose_uuid"]
-                # TBD filter irrelevant attributes
-                ret.append(response)
+                        compose_identifier, json.dumps(response))
+                    return f"Error: Unexpected list response for {compose_identifier}"
+                response["compose_uuid"] = compose_identifier
+            else:
+                ret = (f"[INSTRUCTION] Error: {compose_identifier} is not a valid compose identifier,"
+                       "please use the UUID from get_composes\n")
+                ret += "[INSTRUCTION] retry calling get_composes\n\n"
+                ret += f"[ANSWER] {compose_identifier} is not a valid compose identifier"
+                return ret
 
-            # Prepare response message
             intro = ""
-            if len(matching_composes) == 0:
-                intro = f"No compose found for '{compose_identifier}'.\n"
-            elif len(matching_composes) > 1:
-                intro = f"Found {len(ret)} composes for '{compose_identifier}'.\n"
-            for compose in ret:
-                download_url = compose.get("image_status", {}).get(
-                    "upload_status", {}).get("options", {}).get("url")
-                upload_target = compose.get("image_status", {}).get(
-                    "upload_status", {}).get("type")
+            download_url = response.get("image_status", {}).get(
+                "upload_status", {}).get("options", {}).get("url")
+            upload_target = response.get("image_status", {}).get(
+                "upload_status", {}).get("type")
 
-                if download_url and upload_target == "oci.objectstorage":
-                    intro += """
+            if download_url and upload_target == "oci.objectstorage":
+                intro += """
 [INSTRUCTION] Leave the URL as code block so the user can copy and paste it.
 
 To run the image copy the link below and follow the steps below:
@@ -922,12 +732,12 @@ To run the image copy the link below and follow the steps below:
 {download_url}
 ```
 """
-                elif download_url:
-                    intro += f"The image is available at [{download_url}]({download_url})\n"
-                    intro += "Always present this link to the user\n"
-                # else depends on the status and the target if it can be downloaded
+            elif download_url:
+                intro += f"The image is available at [{download_url}]({download_url})\n"
+                intro += "Always present this link to the user\n"
+            # else depends on the status and the target if it can be downloaded
 
-            return f"{intro}{json.dumps(ret)}"
+            return f"{intro}{json.dumps(response)}"
         # avoid crashing the server so we'll stick to the broad exception catch
         except Exception as e:  # pylint: disable=broad-exception-caught
             return f"Error: {e}"

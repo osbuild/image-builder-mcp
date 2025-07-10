@@ -78,11 +78,11 @@ class TestGetBlueprints:
             mock_client.make_request.return_value = mock_api_response
             mcp_server.clients['test-client-id'] = mock_client
 
-            # Call the method
-            result = mcp_server.get_blueprints(response_size=7)
+            # Call the method with new interface
+            result = mcp_server.get_blueprints(limit=7, offset=0)
 
-            # Verify API was called correctly
-            mock_client.make_request.assert_called_once_with("blueprints")
+            # Verify API was called correctly with limit and offset parameters
+            mock_client.make_request.assert_called_once_with("blueprints", params={"limit": 7, "offset": 0})
 
             # Parse the result
             assert result.startswith("[INSTRUCTION]")
@@ -107,15 +107,15 @@ class TestGetBlueprints:
 
             # Verify sorting by last_modified_at (descending)
             expected_order = [
-                "rhel-10-x86_64-07022025-1708",  # 2025-07-02T21:12:12Z
-                "test-rhel-9-x86_64-07022025-1708",     # 2025-07-02T18:14:17Z
+                "rhel-10-x86_64-07022025-1708",      # 2025-07-02T21:12:12Z
+                "test-rhel-9-x86_64-07022025-1708",  # 2025-07-02T18:14:17Z
                 "test-rhel-10-x86_64-07012025-1726",  # 2025-07-01T15:27:11Z
-                "rhel-9-x86_64-06302025-1310"   # 2025-06-30T11:12:15Z
+                "rhel-9-x86_64-06302025-1310"        # 2025-06-30T11:12:15Z
             ]
             actual_order = [bp['name'] for bp in blueprints]
             assert actual_order == expected_order
 
-            # Verify reply_id sequence
+            # Verify reply_id sequence (starts from offset + 1)
             reply_ids = [bp['reply_id'] for bp in blueprints]
             assert reply_ids == [1, 2, 3, 4]
 
@@ -125,8 +125,8 @@ class TestGetBlueprints:
                                 f"{blueprint['blueprint_uuid']}")
                 assert blueprint['UI_URL'] == expected_url
 
-    def test_get_blueprints_with_response_size_limit(self, mcp_server, mock_client, mock_api_response):
-        """Test get_blueprints with response size limitation."""
+    def test_get_blueprints_with_limit_and_offset(self, mcp_server, mock_client, mock_api_response):
+        """Test get_blueprints with limit and offset parameters."""
         # Setup mocks
         with patch.object(image_builder_mcp, 'get_http_headers') as mock_headers:
             mock_headers.return_value = {
@@ -136,8 +136,11 @@ class TestGetBlueprints:
             mock_client.make_request.return_value = mock_api_response
             mcp_server.clients['test-client-id'] = mock_client
 
-            # Call with limited response size
-            result = mcp_server.get_blueprints(response_size=2)
+            # Call with limit=2, offset=1
+            result = mcp_server.get_blueprints(limit=2, offset=1)
+
+            # Verify API was called with correct parameters
+            mock_client.make_request.assert_called_once_with("blueprints", params={"limit": 2, "offset": 1})
 
             # Extract JSON data from result
             json_start = result.find('[{"reply_id"')
@@ -145,9 +148,12 @@ class TestGetBlueprints:
             json_data = result[json_start:json_end]
             blueprints = json.loads(json_data)
 
-            # Should return only 2 blueprints despite having 4 in response
-            assert len(blueprints) == 2
-            assert "Only 2 out of 4 returned" in result
+            # Should return all 4 blueprints since we're filtering client-side
+            assert len(blueprints) == 4
+
+            # Verify reply_id sequence starts from offset + 1
+            reply_ids = [bp['reply_id'] for bp in blueprints]
+            assert reply_ids == [2, 3, 4, 5]  # offset=1, so starts from 2
 
     def test_get_blueprints_with_search_string(self, mcp_server, mock_client, mock_api_response):
         """Test get_blueprints with search string filtering."""
@@ -161,7 +167,7 @@ class TestGetBlueprints:
             mcp_server.clients['test-client-id'] = mock_client
 
             # Call with search string
-            result = mcp_server.get_blueprints(response_size=10, search_string="rhel-10")
+            result = mcp_server.get_blueprints(limit=10, offset=0, search_string="rhel-10")
 
             # Extract JSON data from result
             json_start = result.find('[{"reply_id"')
@@ -186,7 +192,7 @@ class TestGetBlueprints:
             mcp_server.clients['test-client-id'] = mock_client
 
             # Call with uppercase search string
-            result = mcp_server.get_blueprints(response_size=10, search_string="TEST")
+            result = mcp_server.get_blueprints(limit=10, offset=0, search_string="TEST")
 
             # Extract JSON data from result
             json_start = result.find('[{"reply_id"')
@@ -212,11 +218,10 @@ class TestGetBlueprints:
             mcp_server.clients['test-client-id'] = mock_client
 
             # Call the method
-            result = mcp_server.get_blueprints(response_size=7)
+            result = mcp_server.get_blueprints(limit=7, offset=0)
 
             # Should return empty list
             assert "[]" in result
-            assert "All 0 entries" in result
 
     def test_get_blueprints_api_error(self, mcp_server, mock_client):
         """Test get_blueprints when API returns error."""
@@ -230,13 +235,13 @@ class TestGetBlueprints:
             mcp_server.clients['test-client-id'] = mock_client
 
             # Call the method
-            result = mcp_server.get_blueprints(response_size=7)
+            result = mcp_server.get_blueprints(limit=7, offset=0)
 
             # Should return error message
             assert result.startswith("Error: API Error")
 
-    def test_get_blueprints_internal_state_management(self, mcp_server, mock_client, mock_api_response):
-        """Test that get_blueprints properly manages internal state."""
+    def test_get_blueprints_default_parameters(self, mcp_server, mock_client, mock_api_response):
+        """Test get_blueprints uses default parameters correctly."""
         # Setup mocks
         with patch.object(image_builder_mcp, 'get_http_headers') as mock_headers:
             mock_headers.return_value = {
@@ -246,22 +251,15 @@ class TestGetBlueprints:
             mock_client.make_request.return_value = mock_api_response
             mcp_server.clients['test-client-id'] = mock_client
 
-            # Call the method
-            mcp_server.get_blueprints(response_size=2)
+            # Call the method without parameters (should use defaults)
+            result = mcp_server.get_blueprints()
 
-            # Verify internal state was updated
-            assert 'test-client-id' in mcp_server.blueprints
-            assert len(mcp_server.blueprints['test-client-id']) == 4
-            assert 'test-client-id' in mcp_server.blueprint_current_index
-            # min(4, 2+1)
-            assert mcp_server.blueprint_current_index['test-client-id'] == 3
+            # Verify API was called with default parameters
+            mock_client.make_request.assert_called_once_with("blueprints", params={"limit": 7, "offset": 0})
 
-            # Verify blueprint data structure
-            for i, blueprint in enumerate(mcp_server.blueprints['test-client-id']):
-                assert blueprint['reply_id'] == i + 1
-                assert 'blueprint_uuid' in blueprint
-                assert 'UI_URL' in blueprint
-                assert 'name' in blueprint
+            # Should return result
+            assert "[INSTRUCTION]" in result
+            assert "[ANSWER]" in result
 
     def test_get_blueprints_null_search_string_handling(self, mcp_server, mock_client, mock_api_response):
         """Test handling of 'null' string as search parameter."""
@@ -274,7 +272,7 @@ class TestGetBlueprints:
             mcp_server.clients['test-client-id'] = mock_client
 
             # Call with "null" string (workaround for LLama 3.3 70B Instruct)
-            result = mcp_server.get_blueprints(response_size=10, search_string="null")
+            result = mcp_server.get_blueprints(limit=10, offset=0, search_string="null")
 
             # Should treat "null" string as None and return all blueprints
             json_start = result.find('[{"reply_id"')
@@ -283,3 +281,24 @@ class TestGetBlueprints:
             blueprints = json.loads(json_data)
 
             assert len(blueprints) == 4  # All blueprints should be returned
+
+    def test_get_blueprints_zero_limit_uses_default(self, mcp_server, mock_client, mock_api_response):
+        """Test that zero or negative limit uses default response size."""
+        # Setup mocks
+        with patch.object(image_builder_mcp, 'get_http_headers') as mock_headers:
+            mock_headers.return_value = {
+                'image-builder-client-id': 'test-client-id',
+                'image-builder-client-secret': 'test-client-secret'
+            }
+            mock_client.make_request.return_value = mock_api_response
+            mcp_server.clients['test-client-id'] = mock_client
+
+            # Call with zero limit
+            result = mcp_server.get_blueprints(limit=0)
+
+            # Should use default response size (10)
+            mock_client.make_request.assert_called_once_with("blueprints", params={"limit": 10, "offset": 0})
+
+            # Should return result
+            assert "[INSTRUCTION]" in result
+            assert "[ANSWER]" in result

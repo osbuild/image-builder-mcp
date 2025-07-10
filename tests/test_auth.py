@@ -14,13 +14,11 @@ class TestAuthentication:
     # List of functions to test for authentication (excluding get_openapi)
     AUTH_FUNCTIONS = [
         ('create_blueprint', {'data': {'name': 'test', 'description': 'test'}}),
-        ('get_blueprints', {'response_size': 7}),
-        ('get_more_blueprints', {'response_size': 7}),
-        ('get_blueprint_details', {'blueprint_identifier': 'test-uuid'}),
-        ('get_composes', {'response_size': 7}),
-        ('get_more_composes', {'response_size': 7}),
-        ('get_compose_details', {'compose_identifier': 'test-uuid'}),
-        ('blueprint_compose', {'blueprint_uuid': 'test-uuid'}),
+        ('get_blueprints', {'limit': 7, 'offset': 0}),
+        ('get_blueprint_details', {'blueprint_identifier': '12345678-1234-1234-1234-123456789012'}),
+        ('get_composes', {'limit': 7, 'offset': 0}),
+        ('get_compose_details', {'compose_identifier': '12345678-1234-1234-1234-123456789012'}),
+        ('blueprint_compose', {'blueprint_uuid': '12345678-1234-1234-1234-123456789012'}),
     ]
 
     @pytest.mark.parametrize("function_name,kwargs", AUTH_FUNCTIONS)
@@ -29,7 +27,8 @@ class TestAuthentication:
         mcp_server = ImageBuilderMCP(
             client_id='test-client-id',
             client_secret='test-client-secret',
-            stage=False
+            stage=False,
+            oauth_enabled=False
         )
 
         # Setup mocks - no credentials
@@ -51,7 +50,8 @@ class TestAuthentication:
         mcp_server = ImageBuilderMCP(
             client_id=None,
             client_secret=None,
-            stage=False
+            stage=False,
+            oauth_enabled=False
         )
 
         # Test default transport mode
@@ -79,7 +79,8 @@ class TestAuthentication:
             client_id=None,
             client_secret=None,
             stage=False,
-            transport="sse"
+            transport="sse",
+            oauth_enabled=False
         )
 
         with patch.object(image_builder_mcp, 'get_http_headers') as mock_headers:
@@ -106,7 +107,8 @@ class TestAuthentication:
             client_id=None,
             client_secret=None,
             stage=False,
-            transport="http"
+            transport="http",
+            oauth_enabled=False
         )
 
         with patch.object(image_builder_mcp, 'get_http_headers') as mock_headers:
