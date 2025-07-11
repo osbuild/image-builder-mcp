@@ -7,9 +7,13 @@ build: ## Build the container image
 lint: ## Run linting with pre-commit
 	pre-commit run --all-files
 
-test: ## Run tests with pytest
+test: ## Run tests with pytest (hides logging output)
 	@echo "Running pytest tests..."
 	pytest tests/ -v
+
+test-verbose: ## Run tests with pytest with verbose output (shows logging output)
+	@echo "Running pytest tests with verbose output..."
+	pytest tests/ -vv -o log_cli=true
 
 test-coverage: ## Run tests with coverage reporting
 	@echo "Running pytest tests with coverage..."
