@@ -15,6 +15,10 @@ test-verbose: ## Run tests with pytest with verbose output (shows logging output
 	@echo "Running pytest tests with verbose output..."
 	pytest tests/ -vv -o log_cli=true
 
+test-very-verbose: ## Run tests with pytest with debug output (shows logging output)
+	@echo "Running pytest tests with debug output..."
+	pytest tests/ -vvv -o log_cli=true
+
 test-coverage: ## Run tests with coverage reporting
 	@echo "Running pytest tests with coverage..."
 	pytest tests/ -v --cov=. --cov-report=html --cov-report=term-missing

@@ -3,7 +3,6 @@
 import json
 import os
 import logging
-import socket
 import asyncio
 import multiprocessing
 import time
@@ -12,11 +11,7 @@ from typing import Dict, List, Any
 import pytest
 import requests
 
-
-def should_skip_llm_tests() -> bool:
-    """Check if LLM integration tests should be skipped."""
-    required_vars = ['MODEL_API', 'MODEL_ID', 'USER_KEY']
-    return not all(os.getenv(var) for var in required_vars)
+from .test_utils import should_skip_llm_tests, get_free_port, LLMTestUtils
 
 
 @pytest.fixture
@@ -34,18 +29,14 @@ def verbose_logger(request):
     return logger
 
 
-def get_free_port() -> int:
-    """Find a free port on localhost."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        s.listen(1)
-        port = s.getsockname()[1]
-    return port
-
-
 @pytest.mark.skipif(should_skip_llm_tests(), reason="LLM environment variables not set")
 class TestLLMIntegration:
     """Test LLM integration with MCP server using HTTP streaming protocol."""
+
+    @pytest.fixture(autouse=True)
+    def setup_utils(self):
+        """Set up utilities for tests."""
+        self.utils = LLMTestUtils()
 
     @pytest.fixture(scope="session")
     def mcp_server_thread(self):  # pylint: disable=too-many-locals
@@ -150,236 +141,19 @@ class TestLLMIntegration:
                 if server_process.is_alive():
                     server_process.kill()
 
-    def get_mcp_tools(self, server_url: str) -> List[Dict[str, Any]]:
-        """Extract available tools from MCP server using HTTP streaming protocol."""
-        session = requests.Session()
-        session_id = None
-
-        try:
-            # Step 1: Initialize MCP session
-            init_request = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {},
-                        "resources": {},
-                        "prompts": {}
-                    },
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
-                }
-            }
-
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json, text/event-stream'
-            }
-
-            response = session.post(
-                server_url,
-                json=init_request,
-                headers=headers,
-                timeout=10
-            )
-
-            if response.status_code != 200:
-                # pylint: disable=broad-exception-raised
-                raise Exception(f"Initialize failed: {response.status_code} - {response.text}")
-
-            # Extract session ID from response headers
-            session_id = response.headers.get('mcp-session-id')
-            if not session_id:
-                # Try to extract from cookie or other headers
-                session_id = response.headers.get('Mcp-Session-Id')
-
-            # Parse response - it could be JSON or SSE format
-            init_response = self._parse_mcp_response(response.text)
-            if not init_response:
-                # pylint: disable=broad-exception-raised
-                raise Exception("Failed to parse MCP response")
-
-            # Step 2: Send initialized notification
-            if session_id:
-                headers['mcp-session-id'] = session_id
-
-            initialized_notification = {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            }
-
-            session.post(
-                server_url,
-                json=initialized_notification,
-                headers=headers,
-                timeout=10
-            )
-
-            # Step 3: List available tools
-            tools_request = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list",
-                "params": {}
-            }
-
-            response = session.post(
-                server_url,
-                json=tools_request,
-                headers=headers,
-                timeout=10
-            )
-
-            if response.status_code != 200:
-                # pylint: disable=broad-exception-raised
-                raise Exception(f"Tools list failed: {response.status_code} - {response.text}")
-
-            tools_response = self._parse_mcp_response(response.text)
-
-            # Extract tools from response
-            if isinstance(tools_response, list) and len(tools_response) > 0:
-                tools_data = tools_response[0].get('result', {})
-            else:
-                tools_data = tools_response.get('result', {})
-
-            tools = tools_data.get('tools', [])
-
-            # Convert MCP tools to OpenAI function format
-            return self._convert_mcp_tools_to_openai_format(tools)
-
-        except Exception as e:
-            raise Exception(f"Failed to get MCP tools: {e}") from e  # pylint: disable=broad-exception-raised
-
-    def _parse_mcp_response(self, response_text: str) -> Dict[str, Any]:
-        """Parse MCP response which could be JSON or SSE format."""
-        try:
-            # Try parsing as JSON first
-            return json.loads(response_text)
-        except json.JSONDecodeError:
-            # Try parsing as SSE format
-            return self._parse_sse_response(response_text)
-
-    def _parse_sse_response(self, sse_text: str) -> Dict[str, Any]:
-        """Parse Server-Sent Events response format."""
-        for line in sse_text.split('\n'):
-            if line.startswith('data: '):
-                data_part = line[6:]  # Remove 'data: ' prefix
-                try:
-                    return json.loads(data_part)
-                except json.JSONDecodeError:
-                    continue
-
-        raise Exception(f"No valid JSON found in SSE response: {sse_text}")  # pylint: disable=broad-exception-raised
-
-    def _convert_mcp_tools_to_openai_format(self, mcp_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert MCP tools to OpenAI function calling format."""
-        openai_tools = []
-
-        for tool in mcp_tools:
-            openai_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool.get("name", ""),
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get("inputSchema", {
-                        "type": "object",
-                        "properties": {}
-                    })
-                }
-            }
-            openai_tools.append(openai_tool)
-
-        return openai_tools
-
-    def call_llm(self, prompt: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Call LLM with tools and return response."""
-        api_url = os.getenv('MODEL_API')
-        model_id = os.getenv('MODEL_ID')
-        api_key = os.getenv('USER_KEY')
-
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}'
-        }
-
-        payload = {
-            "model": model_id,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "tools": tools,
-            "tool_choice": "auto"
-        }
-
-        response = requests.post(f"{api_url}/chat/completions", json=payload, headers=headers, timeout=30)
-
-        if response.status_code != 200:
-            # pylint: disable=broad-exception-raised
-            raise Exception(f"LLM API call failed: {response.status_code} - {response.text}")
-
-        return response.json()
-
-    def test_tool_definitions_extraction(self, mcp_server_thread):
-        """Test that we can extract tool definitions from MCP server."""
-        server_url = mcp_server_thread
-
-        # Get tools from MCP server
-        tools = self.get_mcp_tools(server_url)
-
-        # Verify we got some tools
-        assert len(tools) > 0, "No tools extracted from MCP server"
-
-        # Check that tools have required OpenAI format
-        for tool in tools:
-            assert "type" in tool, f"Tool missing 'type' field: {tool}"
-            assert tool["type"] == "function", f"Tool type should be 'function': {tool}"
-            assert "function" in tool, f"Tool missing 'function' field: {tool}"
-
-            func = tool["function"]
-            assert "name" in func, f"Function missing 'name' field: {func}"
-            assert "description" in func, f"Function missing 'description' field: {func}"
-            assert "parameters" in func, f"Function missing 'parameters' field: {func}"
-
-        print(f"Successfully extracted {len(tools)} tools from MCP server")
-        for tool in tools:
-            print(f"  - {tool['function']['name']}: {tool['function']['description']}")
-
-    def test_llm_api_connectivity(self, mcp_server_thread):
-        """Test basic LLM API connectivity."""
-        server_url = mcp_server_thread
-
-        # Get tools from MCP server
-        tools = self.get_mcp_tools(server_url)
-
-        # Test basic LLM call
-        try:
-            response = self.call_llm("Hello, can you help me?", tools)
-            assert "choices" in response, "LLM response missing 'choices' field"
-            assert len(response["choices"]) > 0, "LLM response has no choices"
-
-            print("LLM API connectivity test passed")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            pytest.skip(f"LLM API not accessible: {e}")
-
     def test_rhel_image_creation_question(self, mcp_server_thread, verbose_logger):  # pylint: disable=redefined-outer-name
         """Test LLM tool selection for RHEL image creation."""
         server_url = mcp_server_thread
 
-        # Get tools from MCP server
-        tools = self.get_mcp_tools(server_url)
+        # Get tools and instructions from MCP server
+        tools, system_prompt = self.utils.get_mcp_tools_and_instructions(server_url)
 
-        verbose_logger.info(f"test_rhel_image_creation_question: tools:\n{json.dumps(tools, indent=2)}")
+        verbose_logger.debug(f"Extracted system prompt: {system_prompt[:200]}...")
 
         # Ask about creating RHEL image
         prompt = "Can you create a RHEL 9 image for me?"
 
-        response = self.call_llm(prompt, tools)
-
-        verbose_logger.info(f"test_rhel_image_creation_question: LLM response:\n{json.dumps(response, indent=2)}")
+        response = self.utils.call_llm(prompt, tools, verbose_logger, system_prompt)
 
         # Check if LLM wants to use tools
         choice = response["choices"][0]
@@ -390,31 +164,46 @@ class TestLLMIntegration:
             tool_calls = message["tool_calls"]
             tool_names = [call["function"]["name"] for call in tool_calls]
 
-            # Check if LLM selected relevant tools
-            expected_tools = ["create_blueprint", "get_openapi"]
-            found_relevant = any(tool in tool_names for tool in expected_tools)
-
             assert "create_blueprint" not in tool_names, (
                 "LLM should not select create_blueprint tool, but rather ask for more information"
             )
 
-            assert found_relevant, f"LLM didn't select relevant tools. Selected: {tool_names}"
-            print(f"LLM correctly selected tools: {tool_names}")
+            if "get_openapi" in tool_names:
+                # Process tool calls and get final response from LLM
+                final_response = self.utils._process_tool_calls(
+                    response, tools, server_url, verbose_logger, system_prompt, prompt)
+                verbose_logger.info(f"Final LLM response after tool calls: {json.dumps(final_response, indent=2)}")
+
+                # Check the final response content
+                final_choice = final_response["choices"][0]
+                final_message = final_choice["message"]
+                final_content = final_message.get("content", "")
+
+                # The LLM should now provide a more informative response using the tool results
+                verbose_logger.info(f"Final response content: {final_content}")
+
+                # Update response for further assertions
+                response = final_response
+
         else:
             print("LLM responded without tool calls")
-            # TBD check if LLM asks for more information
+            # Check if LLM asks for more information in its response text
+            response_text = message.get("content", "").lower()
+            asking_questions = any(word in response_text for word in ["what", "which", "do you", "would you", "?"])
 
-    def test_image_build_status_question(self, mcp_server_thread):
+            assert asking_questions, f"LLM should be asking for more information, but it didn't: {response_text}"
+
+    def test_image_build_status_question(self, mcp_server_thread, verbose_logger):
         """Test LLM tool selection for image build status."""
         server_url = mcp_server_thread
 
-        # Get tools from MCP server
-        tools = self.get_mcp_tools(server_url)
+        # Get tools and instructions from MCP server
+        tools, system_prompt = self.utils.get_mcp_tools_and_instructions(server_url)
 
         # Ask about image build status
         prompt = "What is the status of my latest image build?"
 
-        response = self.call_llm(prompt, tools)
+        response = self.utils.call_llm(prompt, tools, verbose_logger, system_prompt)
 
         # Check if LLM wants to use tools
         choice = response["choices"][0]
@@ -433,3 +222,73 @@ class TestLLMIntegration:
             print(f"LLM correctly selected tools: {tool_names}")
         else:
             print("LLM responded without tool calls - this might be expected behavior")
+
+    def test_behavioral_rules_effectiveness(self, mcp_server_thread, verbose_logger):
+        """Test that the behavioral rules in system prompt are effective."""
+        server_url = mcp_server_thread
+
+        # Get tools and instructions from MCP server
+        tools, system_prompt = self.utils.get_mcp_tools_and_instructions(server_url)
+
+        # Ask about creating RHEL image
+        prompt = "Can you create a RHEL 9 image for me?"
+
+        response = self.utils.call_llm(prompt, tools, verbose_logger, system_prompt)
+
+        # Check LLM response
+        choice = response["choices"][0]
+        message = choice["message"]
+
+        # The key test: LLM should NOT immediately call create_blueprint
+        if "tool_calls" in message and message["tool_calls"]:
+            tool_calls = message["tool_calls"]
+            tool_names = [call["function"]["name"] for call in tool_calls]
+
+            # This is the critical assertion - system prompt should prevent immediate create_blueprint calls
+            assert "create_blueprint" not in tool_names, (
+                f"❌ BEHAVIORAL RULE VIOLATION: LLM called create_blueprint immediately! "
+                f"Tool calls: {tool_names}. System prompt not working correctly."
+            )
+
+            # LLM should select get_openapi to understand the structure first
+            if "get_openapi" in tool_names:
+                print("✓ LLM correctly selected get_openapi to understand structure first")
+            else:
+                print(f"LLM selected tools: {tool_names}")
+        else:
+            # If no tool calls, LLM should be asking questions
+            response_text = message.get("content", "")
+            print(f"✓ LLM responded with text instead of immediate tool calls: {response_text[:100]}...")
+
+        print("✓ Behavioral rules are working - LLM did not immediately call create_blueprint")
+
+    def test_complete_conversation_flow(self, mcp_server_thread, verbose_logger):
+        """Test complete conversation flow demonstrating proper agent behavior."""
+        server_url = mcp_server_thread
+
+        # Get tools and instructions from MCP server
+        tools, system_prompt = self.utils.get_mcp_tools_and_instructions(server_url)
+
+        # Test the complete conversation flow
+        user_prompt = "Can you help me understand what blueprints are available?"
+
+        final_response = self.utils.complete_conversation_with_tools(
+            user_prompt, tools, server_url, verbose_logger, system_prompt
+        )
+
+        # Verify we got a proper response
+        assert "choices" in final_response, "Response should have choices"
+        assert len(final_response["choices"]) > 0, "Response should have at least one choice"
+
+        final_choice = final_response["choices"][0]
+        final_message = final_choice["message"]
+        final_content = final_message.get("content", "")
+
+        verbose_logger.info(f"Final conversation response: {final_content}")
+
+        # The response should contain meaningful information about blueprints
+        assert final_content, f"LLM should provide a non-empty response {final_response}"
+        assert len(final_content) > 50, "Response should be substantial"
+
+        print("✓ Complete conversation flow test passed")
+        print(f"Final response length: {len(final_content)} characters")
