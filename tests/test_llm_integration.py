@@ -1,147 +1,35 @@
-"""Test suite for LLM integration with the MCP server."""
+"""Integration tests for LLM functionality with MCP server."""
 
 import json
-import os
-import logging
-import asyncio
-import multiprocessing
-import time
-from typing import Dict, List, Any
 
 import pytest
-import requests
 
-from .test_utils import should_skip_llm_tests, get_free_port, LLMTestUtils
+from .test_utils import should_skip_llm_tests, LLMTestUtils
 
 
-@pytest.fixture
-def verbose_logger(request):
-    """Get a logger that respects pytest verbosity."""
-    logger = logging.getLogger(__name__)
+class ServerStartupError(Exception):
+    """Exception raised when MCP server fails to start."""
 
-    verbosity = request.config.getoption('verbose', default=0)
 
-    if verbosity >= 2:
-        logger.setLevel(logging.INFO)
-    else:
-        logger.setLevel(logging.WARNING)
-
-    return logger
+class ServerConnectionError(Exception):
+    """Exception raised when unable to connect to MCP server."""
 
 
 @pytest.mark.skipif(should_skip_llm_tests(), reason="LLM environment variables not set")
 class TestLLMIntegration:
     """Test LLM integration with MCP server using HTTP streaming protocol."""
 
+    def __init__(self):
+        self.utils = None
+
     @pytest.fixture(autouse=True)
     def setup_utils(self):
         """Set up utilities for tests."""
         self.utils = LLMTestUtils()
 
-    @pytest.fixture(scope="session")
-    def mcp_server_thread(self):  # pylint: disable=too-many-locals
-        """Start MCP server in a separate thread using HTTP streaming."""
+    # pylint: disable=redefined-outer-name, too-many-locals
 
-        port = get_free_port()
-        server_url = f'http://127.0.0.1:{port}/mcp/'
-
-        # Use multiprocessing instead of threading to avoid asyncio conflicts
-        server_queue = multiprocessing.Queue()
-
-        def start_server_process():
-            """Start the MCP server in a separate process."""
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-                # Import here to avoid module-level asyncio conflicts
-                # pylint: disable=import-outside-toplevel
-                from image_builder_mcp.server import ImageBuilderMCP
-
-                # Get credentials from environment (may be None for testing)
-                client_id = os.getenv("IMAGE_BUILDER_CLIENT_ID")
-                client_secret = os.getenv("IMAGE_BUILDER_CLIENT_SECRET")
-
-                mcp_server = ImageBuilderMCP(
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    stage=False,  # Use production API
-                    proxy_url=None,
-                    transport="http",
-                    oauth_enabled=False,
-                )
-
-                # Signal that server is starting
-                server_queue.put("starting")
-
-                # Start server with HTTP transport on dynamic port
-                mcp_server.run(transport="http", host="127.0.0.1", port=port)
-
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                server_queue.put(f"error: {e}")
-
-        # Start server process
-        server_process = multiprocessing.Process(target=start_server_process, daemon=True)
-        server_process.start()
-
-        try:
-            # Wait for server to start
-            start_signal = server_queue.get(timeout=10)
-            if start_signal.startswith("error:"):
-                # pylint: disable=broad-exception-raised
-                raise Exception(f"Server failed to start: {start_signal}")
-
-            # Additional wait for server to be fully ready
-            time.sleep(3)
-
-            # Test server connectivity with retry logic
-            max_retries = 5
-            for attempt in range(max_retries):
-                try:
-                    test_request = {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {},
-                            "clientInfo": {"name": "test-client", "version": "1.0.0"}
-                        }
-                    }
-                    headers = {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json, text/event-stream'
-                    }
-                    response = requests.post(server_url, json=test_request, headers=headers, timeout=10)
-
-                    if response.status_code == 200:
-                        break
-
-                    if attempt == max_retries - 1:
-                        # pylint: disable=broad-exception-raised
-                        raise Exception(f"Server not responding properly after {max_retries}"
-                                        f"attempts: {response.status_code} - {response.text}")
-
-                    time.sleep(2)  # Wait before retry
-
-                except requests.exceptions.RequestException as e:
-                    if attempt == max_retries - 1:
-                        # pylint: disable=broad-exception-raised
-                        raise Exception(f"Failed to connect to server after {max_retries} attempts: {e}") from e
-                    time.sleep(2)  # Wait before retry
-
-            yield server_url
-
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            pytest.fail(f"Failed to start MCP server: {e}")
-        finally:
-            if server_process.is_alive():
-                server_process.terminate()
-                server_process.join(timeout=5)
-                if server_process.is_alive():
-                    server_process.kill()
-
-    def test_rhel_image_creation_question(self, mcp_server_thread, verbose_logger):  # pylint: disable=redefined-outer-name
+    def test_rhel_image_creation_question(self, mcp_server_thread, verbose_logger):
         """Test LLM tool selection for RHEL image creation."""
         server_url = mcp_server_thread
 
@@ -153,7 +41,12 @@ class TestLLMIntegration:
         # Ask about creating RHEL image
         prompt = "Can you create a RHEL 9 image for me?"
 
-        response = self.utils.call_llm(prompt, tools, verbose_logger, system_prompt)
+        response = self.utils.call_llm(
+            prompt=prompt,
+            tools=tools,
+            logger=verbose_logger,
+            system_prompt=system_prompt
+        )
 
         # Check if LLM wants to use tools
         choice = response["choices"][0]
@@ -169,9 +62,9 @@ class TestLLMIntegration:
             )
 
             if "get_openapi" in tool_names:
-                # Process tool calls and get final response from LLM
-                final_response = self.utils._process_tool_calls(
-                    response, tools, server_url, verbose_logger, system_prompt, prompt)
+                # Use the complete conversation flow instead of _process_tool_calls directly
+                final_response = self.utils.complete_conversation_with_tools(
+                    prompt, server_url, verbose_logger, tools=tools, system_prompt=system_prompt)
                 verbose_logger.info(f"Final LLM response after tool calls: {json.dumps(final_response, indent=2)}")
 
                 # Check the final response content
@@ -193,6 +86,7 @@ class TestLLMIntegration:
 
             assert asking_questions, f"LLM should be asking for more information, but it didn't: {response_text}"
 
+    # pylint: disable=redefined-outer-name
     def test_image_build_status_question(self, mcp_server_thread, verbose_logger):
         """Test LLM tool selection for image build status."""
         server_url = mcp_server_thread
@@ -203,7 +97,12 @@ class TestLLMIntegration:
         # Ask about image build status
         prompt = "What is the status of my latest image build?"
 
-        response = self.utils.call_llm(prompt, tools, verbose_logger, system_prompt)
+        response = self.utils.call_llm(
+            prompt=prompt,
+            tools=tools,
+            logger=verbose_logger,
+            system_prompt=system_prompt
+        )
 
         # Check if LLM wants to use tools
         choice = response["choices"][0]
@@ -223,6 +122,7 @@ class TestLLMIntegration:
         else:
             print("LLM responded without tool calls - this might be expected behavior")
 
+    # pylint: disable=redefined-outer-name
     def test_behavioral_rules_effectiveness(self, mcp_server_thread, verbose_logger):
         """Test that the behavioral rules in system prompt are effective."""
         server_url = mcp_server_thread
@@ -233,7 +133,12 @@ class TestLLMIntegration:
         # Ask about creating RHEL image
         prompt = "Can you create a RHEL 9 image for me?"
 
-        response = self.utils.call_llm(prompt, tools, verbose_logger, system_prompt)
+        response = self.utils.call_llm(
+            prompt=prompt,
+            tools=tools,
+            logger=verbose_logger,
+            system_prompt=system_prompt
+        )
 
         # Check LLM response
         choice = response["choices"][0]
@@ -262,6 +167,7 @@ class TestLLMIntegration:
 
         print("✓ Behavioral rules are working - LLM did not immediately call create_blueprint")
 
+    # pylint: disable=redefined-outer-name
     def test_complete_conversation_flow(self, mcp_server_thread, verbose_logger):
         """Test complete conversation flow demonstrating proper agent behavior."""
         server_url = mcp_server_thread
@@ -273,7 +179,7 @@ class TestLLMIntegration:
         user_prompt = "Can you help me understand what blueprints are available?"
 
         final_response = self.utils.complete_conversation_with_tools(
-            user_prompt, tools, server_url, verbose_logger, system_prompt
+            user_prompt, server_url, verbose_logger, tools=tools, system_prompt=system_prompt
         )
 
         # Verify we got a proper response

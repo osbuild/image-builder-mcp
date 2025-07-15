@@ -7,10 +7,39 @@ import socket
 import time
 import asyncio
 import multiprocessing
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 import pytest
 import requests
+
+
+def cleanup_server_process(server_process: multiprocessing.Process) -> None:
+    """Helper function to properly cleanup a server process."""
+    if server_process.is_alive():
+        server_process.terminate()
+        server_process.join(timeout=5)
+        if server_process.is_alive():
+            server_process.kill()
+
+
+class ServerStartupError(Exception):
+    """Exception raised when MCP server fails to start."""
+
+
+class ServerConnectionError(Exception):
+    """Exception raised when unable to connect to MCP server."""
+
+
+class MCPResponseError(Exception):
+    """Exception raised when MCP response is invalid or unexpected."""
+
+
+class LLMAPIError(Exception):
+    """Exception raised when LLM API call fails."""
+
+
+class ToolCallError(Exception):
+    """Exception raised when tool call fails."""
 
 
 def should_skip_llm_tests() -> bool:
@@ -45,10 +74,8 @@ def get_free_port() -> int:
     return port
 
 
-@pytest.fixture(scope="session")
-def mcp_server_thread():  # pylint: disable=too-many-locals
-    """Start MCP server in a separate thread using HTTP streaming."""
-
+def start_mcp_server_process():
+    """Start MCP server in a separate process - shared utility function."""
     port = get_free_port()
     server_url = f'http://127.0.0.1:{port}/mcp/'
 
@@ -95,8 +122,7 @@ def mcp_server_thread():  # pylint: disable=too-many-locals
         # Wait for server to start
         start_signal = server_queue.get(timeout=10)
         if start_signal.startswith("error:"):
-            # pylint: disable=broad-exception-raised
-            raise Exception(f"Server failed to start: {start_signal}")
+            raise ServerStartupError(f"Server failed to start: {start_signal}")
 
         # Additional wait for server to be fully ready
         time.sleep(3)
@@ -125,28 +151,75 @@ def mcp_server_thread():  # pylint: disable=too-many-locals
                     break
 
                 if attempt == max_retries - 1:
-                    # pylint: disable=broad-exception-raised
-                    raise Exception(f"Server not responding properly after {max_retries}"
-                                    f"attempts: {response.status_code} - {response.text}")
+                    raise ServerConnectionError(f"Server not responding properly after {max_retries}"
+                                                f"attempts: {response.status_code} - {response.text}")
 
                 time.sleep(2)  # Wait before retry
 
             except requests.exceptions.RequestException as e:
                 if attempt == max_retries - 1:
-                    # pylint: disable=broad-exception-raised
-                    raise Exception(f"Failed to connect to server after {max_retries} attempts: {e}") from e
+                    raise ServerConnectionError(f"Failed to connect to server after {max_retries} attempts: {e}") from e
                 time.sleep(2)  # Wait before retry
 
-        yield server_url
+        return server_url, server_process
 
     except Exception as e:  # pylint: disable=broad-exception-caught
-        pytest.fail(f"Failed to start MCP server: {e}")
-    finally:
-        if server_process.is_alive():
-            server_process.terminate()
-            server_process.join(timeout=5)
-            if server_process.is_alive():
-                server_process.kill()
+        cleanup_server_process(server_process)
+        raise e
+
+
+class TypeCaster:
+    """Helper class for casting tool arguments to proper types."""
+
+    @staticmethod
+    def cast_integer(value: Any) -> Any:
+        """Cast value to integer if possible."""
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return value
+
+    @staticmethod
+    def cast_number(value: Any) -> Any:
+        """Cast value to float if possible."""
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return value
+
+    @staticmethod
+    def cast_boolean(value: Any) -> Any:
+        """Cast value to boolean."""
+        if isinstance(value, str):
+            return value.lower() in ("true", "1", "yes", "on")
+        return bool(value)
+
+    @staticmethod
+    def cast_string(value: Any) -> Any:
+        """Cast value to string, handling null values."""
+        if value is None or value == "null":
+            return None
+        return str(value)
+
+    @staticmethod
+    def cast_object(value: Any) -> Any:
+        """Cast value to object/dict."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
+
+    @staticmethod
+    def cast_array(value: Any) -> Any:
+        """Cast value to array/list."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
 
 
 class LLMTestUtils:
@@ -155,123 +228,108 @@ class LLMTestUtils:
     def get_mcp_tools_and_instructions(self, server_url: str) -> tuple[List[Dict[str, Any]], str]:
         """Extract available tools and instructions from MCP server using HTTP streaming protocol."""
         session = requests.Session()
-        session_id = None
 
-        try:
-            # Step 1: Initialize MCP session
-            init_request = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {},
-                        "resources": {},
-                        "prompts": {}
-                    },
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
+        # Initialize session and get tools
+        self._initialize_mcp_session(session, server_url)
+        tools_data = self._get_tools_list(session, server_url)
+
+        # Extract server instructions and tools
+        server_instructions = self._extract_server_instructions(tools_data)
+        tools = self._extract_tools_from_response(tools_data)
+
+        # Convert MCP tools to OpenAI function format
+        return self._convert_mcp_tools_to_openai_format(tools), server_instructions
+
+    def _initialize_mcp_session(self, session: requests.Session, server_url: str) -> str:
+        """Initialize MCP session and return session ID."""
+        init_request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {}
+                },
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
                 }
             }
+        }
 
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json, text/event-stream'
-            }
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream'
+        }
 
-            response = session.post(
-                server_url,
-                json=init_request,
-                headers=headers,
-                timeout=10
-            )
+        response = session.post(server_url, json=init_request, headers=headers, timeout=10)
 
-            if response.status_code != 200:
-                # pylint: disable=broad-exception-raised
-                raise Exception(f"Initialize failed: {response.status_code} - {response.text}")
+        if response.status_code != 200:
+            raise MCPResponseError(f"Initialize failed: {response.status_code} - {response.text}")
 
-            # Extract session ID from response headers
-            session_id = response.headers.get('mcp-session-id')
-            if not session_id:
-                # Try to extract from cookie or other headers
-                session_id = response.headers.get('Mcp-Session-Id')
+        # Extract session ID from response headers
+        session_id = response.headers.get('mcp-session-id') or response.headers.get('Mcp-Session-Id')
 
-            # Parse response - it could be JSON or SSE format
-            init_response = self._parse_mcp_response(response.text)
-            if not init_response:
-                # pylint: disable=broad-exception-raised
-                raise Exception("Failed to parse MCP response")
+        # Send initialized notification
+        if session_id:
+            headers['mcp-session-id'] = session_id
 
-            # Extract server instructions from initialization response
-            server_instructions = ""
-            if isinstance(init_response, list) and len(init_response) > 0:
-                server_info = init_response[0].get('result', {})
-            else:
-                server_info = init_response.get('result', {})
+        initialized_notification = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }
 
-            # Look for instructions in the server info
-            server_instructions = server_info.get('instructions', '')
+        session.post(server_url, json=initialized_notification, headers=headers, timeout=10)
+        return session_id or ""
 
-            # Step 2: Send initialized notification
-            if session_id:
-                headers['mcp-session-id'] = session_id
+    def _get_tools_list(self, session: requests.Session, server_url: str) -> Dict[str, Any]:
+        """Get tools list from MCP server."""
+        tools_request = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
+        }
 
-            initialized_notification = {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            }
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream'
+        }
 
-            session.post(
-                server_url,
-                json=initialized_notification,
-                headers=headers,
-                timeout=10
-            )
+        response = session.post(server_url, json=tools_request, headers=headers, timeout=10)
 
-            # Step 3: List available tools
-            tools_request = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list",
-                "params": {}
-            }
+        if response.status_code != 200:
+            raise MCPResponseError(f"Tools list failed: {response.status_code} - {response.text}")
 
-            response = session.post(
-                server_url,
-                json=tools_request,
-                headers=headers,
-                timeout=10
-            )
+        return self.parse_mcp_response(response.text)
 
-            if response.status_code != 200:
-                # pylint: disable=broad-exception-raised
-                raise Exception(f"Tools list failed: {response.status_code} - {response.text}")
+    def _extract_server_instructions(self, init_response: Dict[str, Any]) -> str:
+        """Extract server instructions from initialization response."""
+        if isinstance(init_response, list) and len(init_response) > 0:
+            server_info = init_response[0].get('result', {})
+        else:
+            server_info = init_response.get('result', {})
 
-            tools_response = self._parse_mcp_response(response.text)
+        return server_info.get('instructions', '')
 
-            # Extract tools from response
-            if isinstance(tools_response, list) and len(tools_response) > 0:
-                tools_data = tools_response[0].get('result', {})
-            else:
-                tools_data = tools_response.get('result', {})
+    def _extract_tools_from_response(self, tools_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract tools from MCP response."""
+        if isinstance(tools_response, list) and len(tools_response) > 0:
+            tools_data = tools_response[0].get('result', {})
+        else:
+            tools_data = tools_response.get('result', {})
 
-            tools = tools_data.get('tools', [])
-
-            # Convert MCP tools to OpenAI function format
-            return self._convert_mcp_tools_to_openai_format(tools), server_instructions
-
-        except Exception as e:
-            raise Exception(f"Failed to get MCP tools: {e}") from e  # pylint: disable=broad-exception-raised
+        return tools_data.get('tools', [])
 
     def get_mcp_tools(self, server_url: str) -> List[Dict[str, Any]]:
         """Extract available tools from MCP server using HTTP streaming protocol."""
         tools, _ = self.get_mcp_tools_and_instructions(server_url)
         return tools
 
-    def _parse_mcp_response(self, response_text: str) -> Dict[str, Any]:
+    def parse_mcp_response(self, response_text: str) -> Dict[str, Any]:
         """Parse MCP response which could be JSON or SSE format."""
         try:
             # Try parsing as JSON first
@@ -290,7 +348,7 @@ class LLMTestUtils:
                 except json.JSONDecodeError:
                     continue
 
-        raise Exception(f"No valid JSON found in SSE response: {sse_text}")  # pylint: disable=broad-exception-raised
+        raise MCPResponseError(f"No valid JSON found in SSE response: {sse_text}")
 
     def _convert_mcp_tools_to_openai_format(self, mcp_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert MCP tools to OpenAI function calling format."""
@@ -312,21 +370,29 @@ class LLMTestUtils:
 
         return openai_tools
 
-    def call_llm(self, prompt: str, tools: List[Dict[str, Any]], verbose_logger: logging.Logger, system_prompt: str = None, messages: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def call_llm(self, **kwargs) -> Dict[str, Any]:
         """Call LLM with tools and return response.
 
         Args:
             prompt: User prompt (used when messages is None)
             tools: Available tools
-            verbose_logger: Logger for output
+            logger: Logger for output
             system_prompt: System prompt (used when messages is None)
             messages: Full conversation history (overrides prompt/system_prompt)
         """
+        # Extract arguments with defaults
+        prompt = kwargs.get('prompt')
+        tools = kwargs.get('tools', [])
+        logger = kwargs.get('logger')
+        system_prompt = kwargs.get('system_prompt')
+        messages = kwargs.get('messages')
+
         api_url = os.getenv('MODEL_API')
         model_id = os.getenv('MODEL_ID')
         api_key = os.getenv('USER_KEY')
 
-        verbose_logger.info(f"call_llm using LLM {model_id} at {api_url}")
+        if logger:
+            logger.info(f"call_llm using LLM {model_id} at {api_url}")
 
         headers = {
             'Content-Type': 'application/json',
@@ -340,9 +406,7 @@ class LLMTestUtils:
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
-        else:
-            # Use provided conversation history
-            messages = messages
+        # else: Use provided conversation history (messages already set)
 
         payload = {
             "model": model_id,
@@ -351,29 +415,25 @@ class LLMTestUtils:
             "tool_choice": "auto"
         }
 
-        verbose_logger.debug(f"call_llm: payload:\n{json.dumps(payload, indent=2)}")
+        if logger:
+            logger.debug(f"call_llm: payload:\n{json.dumps(payload, indent=2)}")
 
         response = requests.post(f"{api_url}/chat/completions", json=payload, headers=headers, timeout=30)
 
-        verbose_logger.debug(f"call_llm: response:\n{json.dumps(response.json(), indent=2)}")
+        if logger:
+            logger.debug(f"call_llm: response:\n{json.dumps(response.json(), indent=2)}")
 
         if response.status_code != 200:
-            # pylint: disable=broad-exception-raised
-            raise Exception(f"LLM API call failed: {response.status_code} - {response.text}")
+            raise LLMAPIError(f"LLM API call failed: {response.status_code} - {response.text}")
 
         return response.json()
 
-    def _cast_tool_args(self, tool_args: Dict[str, Any], tool_name: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def cast_tool_args(self, tool_args: Dict[str, Any], tool_name: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Cast tool arguments to match the parameter specifications from MCP tools."""
         # Find the tool definition
-        tool_def = None
-        for tool in tools:
-            if tool.get("name") == tool_name:
-                tool_def = tool
-                break
+        tool_def = self._find_tool_definition(tool_name, tools)
 
         if not tool_def:
-            # Return original args if tool not found
             return tool_args
 
         # Get parameter specifications from the tool
@@ -381,173 +441,105 @@ class LLMTestUtils:
         properties = input_schema.get("properties", {})
 
         cast_args = {}
+        type_caster = TypeCaster()
 
         for arg_name, arg_value in tool_args.items():
             if arg_name in properties:
                 prop_spec = properties[arg_name]
                 prop_type = prop_spec.get("type")
-
-                # Cast according to the expected type
-                if prop_type == "integer":
-                    try:
-                        cast_args[arg_name] = int(arg_value)
-                    except (ValueError, TypeError):
-                        cast_args[arg_name] = arg_value
-                elif prop_type == "number":
-                    try:
-                        cast_args[arg_name] = float(arg_value)
-                    except (ValueError, TypeError):
-                        cast_args[arg_name] = arg_value
-                elif prop_type == "boolean":
-                    if isinstance(arg_value, str):
-                        cast_args[arg_name] = arg_value.lower() in ("true", "1", "yes", "on")
-                    else:
-                        cast_args[arg_name] = bool(arg_value)
-                elif prop_type == "string":
-                    # Handle nullable strings
-                    if arg_value is None or arg_value == "null":
-                        cast_args[arg_name] = None
-                    else:
-                        cast_args[arg_name] = str(arg_value)
-                elif prop_type == "object":
-                    # Handle dict/object types
-                    if isinstance(arg_value, str):
-                        try:
-                            cast_args[arg_name] = json.loads(arg_value)
-                        except json.JSONDecodeError:
-                            cast_args[arg_name] = arg_value
-                    else:
-                        cast_args[arg_name] = arg_value
-                elif prop_type == "array":
-                    # Handle array types
-                    if isinstance(arg_value, str):
-                        try:
-                            cast_args[arg_name] = json.loads(arg_value)
-                        except json.JSONDecodeError:
-                            cast_args[arg_name] = arg_value
-                    else:
-                        cast_args[arg_name] = arg_value
-                else:
-                    # Unknown type, keep as is
-                    cast_args[arg_name] = arg_value
+                cast_args[arg_name] = self._cast_single_argument(arg_value, prop_type, type_caster)
             else:
                 # Parameter not in schema, keep as is
                 cast_args[arg_name] = arg_value
 
         return cast_args
 
-    def call_tool(self, tool_name: str, tool_args: Dict[str, Any], server_url: str, verbose_logger: logging.Logger, system_prompt: str) -> Dict[str, Any]:
+    def _find_tool_definition(self, tool_name: str, tools: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Find tool definition by name."""
+        for tool in tools:
+            if tool.get("name") == tool_name:
+                return tool
+        return None
+
+    def _cast_single_argument(self, arg_value: Any, prop_type: str, type_caster: TypeCaster) -> Any:
+        """Cast a single argument value based on its expected type."""
+        type_handlers = {
+            "integer": type_caster.cast_integer,
+            "number": type_caster.cast_number,
+            "boolean": type_caster.cast_boolean,
+            "string": type_caster.cast_string,
+            "object": type_caster.cast_object,
+            "array": type_caster.cast_array,
+        }
+
+        handler = type_handlers.get(prop_type)
+        if handler:
+            return handler(arg_value)
+        # Unknown type, keep as is
+        return arg_value
+
+    def call_tool(self, tool_name: str, tool_args: Dict[str, Any],
+                  server_url: str, logger: logging.Logger) -> Dict[str, Any]:
         """Call a specific tool on the MCP server."""
         session = requests.Session()
-        session_id = None
 
         try:
-            # Step 1: Initialize MCP session
-            init_request = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {},
-                        "resources": {},
-                        "prompts": {}
-                    },
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
-                }
-            }
+            # Initialize MCP session
+            self._initialize_mcp_session(session, server_url)
 
-            headers = {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json, text/event-stream'
-            }
+            # Get tool definitions to cast arguments properly
+            tools_data = self._get_tools_list(session, server_url)
+            tools = self._extract_tools_from_response(tools_data)
 
-            response = session.post(server_url, json=init_request, headers=headers, timeout=10)
+            # Cast tool arguments according to parameter specifications
+            tool_args = self.cast_tool_args(tool_args, tool_name, tools)
+            logger.debug(f"Cast tool args for {tool_name}: {tool_args}")
 
-            if response.status_code != 200:
-                raise Exception(f"Initialize failed: {response.status_code} - {response.text}")
-
-            # Extract session ID from response headers
-            session_id = response.headers.get('mcp-session-id')
-            if not session_id:
-                session_id = response.headers.get('Mcp-Session-Id')
-
-            # Step 2: Send initialized notification
-            if session_id:
-                headers['mcp-session-id'] = session_id
-
-            initialized_notification = {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            }
-
-            session.post(server_url, json=initialized_notification, headers=headers, timeout=10)
-
-            # Step 2.5: Get tool definitions to cast arguments properly
-            tools_request = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list",
-                "params": {}
-            }
-
-            tools_response = session.post(server_url, json=tools_request, headers=headers, timeout=10)
-
-            if tools_response.status_code == 200:
-                tools_data = self._parse_mcp_response(tools_response.text)
-
-                # Extract tools from response
-                if isinstance(tools_data, list) and len(tools_data) > 0:
-                    tools_result = tools_data[0].get('result', {})
-                else:
-                    tools_result = tools_data.get('result', {})
-
-                tools = tools_result.get('tools', [])
-
-                # Cast tool arguments according to parameter specifications
-                tool_args = self._cast_tool_args(tool_args, tool_name, tools)
-                verbose_logger.debug(f"Cast tool args for {tool_name}: {tool_args}")
-
-            # Step 3: Call the tool
-            tool_request = {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": tool_args
-                }
-            }
-
-            verbose_logger.debug(f"Calling tool {tool_name} with args: {tool_args}")
-
-            response = session.post(server_url, json=tool_request, headers=headers, timeout=30)
-
-            if response.status_code != 200:
-                raise Exception(f"Tool call failed: {response.status_code} - {response.text}")
-
-            tool_response = self._parse_mcp_response(response.text)
-            verbose_logger.debug(f"Tool response: {tool_response}")
-
+            # Call the tool
+            tool_call = {"name": tool_name, "arguments": tool_args}
+            tool_response = self._execute_tool_call(session, server_url, tool_call, logger)
             return tool_response
 
         except Exception as e:
-            verbose_logger.error(f"Error calling tool {tool_name}: {e}")
-            raise Exception(f"Failed to call tool {tool_name}: {e}") from e
+            logger.error(f"Error calling tool {tool_name}: {e}")
+            raise ToolCallError(f"Failed to call tool {tool_name}: {e}") from e
 
-    def _process_tool_calls(self, response: Dict[str, Any], tools: List[Dict[str, Any]], server_url: str, verbose_logger: logging.Logger, system_prompt: str, original_prompt: str = None) -> Dict[str, Any]:
-        """Process tool calls and return final LLM response with conversation history."""
-        choice = response["choices"][0]
-        message = choice["message"]
+    def _execute_tool_call(self, session: requests.Session, server_url: str,
+                           tool_call: Dict[str, Any], logger: logging.Logger) -> Dict[str, Any]:
+        """Execute the actual tool call."""
+        tool_name = tool_call["name"]
+        tool_args = tool_call["arguments"]
 
-        if "tool_calls" not in message or not message["tool_calls"]:
-            return response
+        tool_request = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": tool_args
+            }
+        }
 
-        tool_calls = message["tool_calls"]
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream'
+        }
+
+        logger.debug(f"Calling tool {tool_name} with args: {tool_args}")
+
+        response = session.post(server_url, json=tool_request, headers=headers, timeout=30)
+
+        if response.status_code != 200:
+            raise ToolCallError(f"Tool call failed: {response.status_code} - {response.text}")
+
+        tool_response = self.parse_mcp_response(response.text)
+        logger.debug(f"Tool response: {tool_response}")
+
+        return tool_response
+
+    def _process_tool_calls(self, tool_calls: List[Dict[str, Any]], server_url: str,
+                            logger: logging.Logger) -> List[Dict[str, Any]]:
+        """Process tool calls and return tool results."""
         tool_results = []
 
         # Process each tool call
@@ -558,7 +550,7 @@ class LLMTestUtils:
             try:
                 tool_args = json.loads(tool_call["function"]["arguments"])
             except json.JSONDecodeError as e:
-                verbose_logger.error(f"Failed to parse tool arguments: {e}")
+                logger.error(f"Failed to parse tool arguments: {e}")
                 tool_result = {
                     "tool_call_id": tool_call["id"],
                     "role": "tool",
@@ -569,7 +561,7 @@ class LLMTestUtils:
 
             # Call the tool
             try:
-                tool_response = self.call_tool(tool_name, tool_args, server_url, verbose_logger, system_prompt)
+                tool_response = self.call_tool(tool_name, tool_args, server_url, logger)
 
                 # Extract the actual result from the MCP response
                 if isinstance(tool_response, list) and len(tool_response) > 0:
@@ -585,68 +577,84 @@ class LLMTestUtils:
                 }
                 tool_results.append(tool_result)
 
-            except Exception as e:
-                verbose_logger.error(f"Tool call failed: {e}")
+            except (ToolCallError, MCPResponseError, LLMAPIError, json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.error(f"Tool call failed: {e}")
                 tool_result = {
                     "tool_call_id": tool_call["id"],
                     "role": "tool",
-                    "content": f"Error: Tool call failed - {e}"
+                    "content": f"Error: {e}"
                 }
                 tool_results.append(tool_result)
 
-        # Build proper conversation history
+        return tool_results
+
+    def complete_conversation_with_tools(self, user_prompt: str, server_url: str,
+                                         logger: logging.Logger, **kwargs) -> Dict[str, Any]:
+        """Complete a full conversation with tool calls, implementing proper agent flow."""
+        tools = kwargs.get('tools', [])
+        system_prompt = kwargs.get('system_prompt', '')
+
+        logger.info(f"Starting conversation with prompt: {user_prompt}")
+
+        # Build conversation messages
         conversation_messages = []
 
         # Add system prompt if provided
         if system_prompt:
             conversation_messages.append({"role": "system", "content": system_prompt})
 
-        # Add original user message
-        if original_prompt:
-            conversation_messages.append({"role": "user", "content": original_prompt})
+        # Add user message
+        conversation_messages.append({"role": "user", "content": user_prompt})
 
-        # Add assistant message with tool calls
-        conversation_messages.append(message)
+        # Loop until no more tool calls are requested
+        max_iterations = 10  # Prevent infinite loops
+        iteration = 0
 
-        # Add tool result messages
-        conversation_messages.extend(tool_results)
+        while iteration < max_iterations:
+            iteration += 1
+            logger.info(f"Conversation iteration {iteration}")
 
-        verbose_logger.debug(f"Conversation history: {json.dumps(conversation_messages, indent=2)}")
+            # Call LLM with current conversation history
+            response = self.call_llm(
+                prompt=None,  # Not used when messages is provided
+                tools=tools,
+                logger=logger,
+                system_prompt=None,  # Already included in messages
+                messages=conversation_messages
+            )
 
-        # Call LLM again with the full conversation history
-        final_response = self.call_llm(
-            prompt=None,  # Not used when messages is provided
-            tools=tools,
-            verbose_logger=verbose_logger,
-            system_prompt=None,  # Already included in messages
-            messages=conversation_messages
-        )
+            # Get the assistant's response
+            choice = response["choices"][0]
+            message = choice["message"]
 
-        return final_response
+            # Add assistant message to conversation
+            conversation_messages.append(message)
 
-    def complete_conversation_with_tools(self, user_prompt: str, tools: List[Dict[str, Any]], server_url: str, verbose_logger: logging.Logger, system_prompt: str) -> Dict[str, Any]:
-        """Complete a full conversation with tool calls, implementing proper agent flow."""
-        verbose_logger.info(f"Starting conversation with prompt: {user_prompt}")
+            # Check if LLM wants to use tools
+            if "tool_calls" in message and message["tool_calls"]:
+                logger.info(f"LLM made tool calls: {[tc['function']['name'] for tc in message['tool_calls']]}")
 
-        # Initial LLM call
-        response = self.call_llm(user_prompt, tools, verbose_logger, system_prompt)
+                # Process tool calls
+                tool_results = self._process_tool_calls(
+                    message["tool_calls"], server_url, logger)
 
-        # Check if LLM wants to use tools
-        choice = response["choices"][0]
-        message = choice["message"]
+                # Add tool results to conversation
+                conversation_messages.extend(tool_results)
 
-        if "tool_calls" in message and message["tool_calls"]:
-            verbose_logger.info(f"LLM made tool calls: {[tc['function']['name'] for tc in message['tool_calls']]}")
+                logger.debug(f"Conversation history after tool calls: {
+                    json.dumps(conversation_messages, indent=2)}")
 
-            # Process tool calls and get final response
-            final_response = self._process_tool_calls(
-                response, tools, server_url, verbose_logger, system_prompt, user_prompt)
+                # Continue the loop to get LLM's response to tool results
+                continue
 
-            verbose_logger.info("Conversation completed with tool calls")
-            return final_response
-        else:
-            verbose_logger.info("LLM responded without tool calls")
-            return response
+            logger.info("LLM responded without tool calls - conversation complete")
+            break
+
+        if iteration >= max_iterations:
+            logger.warning(f"Conversation reached max iterations ({max_iterations})")
+
+        logger.info(f"Conversation completed after {iteration} iterations")
+        return response
 
 
 # Utility tests
@@ -654,6 +662,7 @@ class LLMTestUtils:
 class TestLLMUtils:
     """Test utility functions for LLM integration."""
 
+    # pylint: disable=redefined-outer-name
     def test_tool_definitions_extraction(self, mcp_server_thread):
         """Test that we can extract tool definitions from MCP server."""
         server_url = mcp_server_thread
@@ -680,7 +689,8 @@ class TestLLMUtils:
         for tool in tools:
             print(f"  - {tool['function']['name']}: {tool['function']['description']}")
 
-    def test_llm_api_connectivity(self, mcp_server_thread, verbose_logger):
+    # pylint: disable=redefined-outer-name
+    def test_llm_api_connectivity(self, mcp_server_thread, test_logger):
         """Test basic LLM API connectivity."""
         server_url = mcp_server_thread
         utils = LLMTestUtils()
@@ -690,7 +700,12 @@ class TestLLMUtils:
 
         # Test basic LLM call
         try:
-            response = utils.call_llm("Hello, can you help me?", tools, verbose_logger, system_prompt)
+            response = utils.call_llm(
+                prompt="Hello, can you help me?",
+                tools=tools,
+                logger=test_logger,
+                system_prompt=system_prompt
+            )
             assert "choices" in response, "LLM response missing 'choices' field"
             assert len(response["choices"]) > 0, "LLM response has no choices"
 
@@ -698,19 +713,21 @@ class TestLLMUtils:
         except Exception as e:  # pylint: disable=broad-exception-caught
             pytest.skip(f"LLM API not accessible: {e}")
 
-    def test_system_prompt_extraction(self, mcp_server_thread, verbose_logger):
+    # pylint: disable=redefined-outer-name
+    def test_system_prompt_extraction(self, mcp_server_thread, test_logger):
         """Test that system prompt is correctly extracted from MCP server."""
         server_url = mcp_server_thread
         utils = LLMTestUtils()
 
         # Get tools and instructions from MCP server
-        tools, system_prompt = utils.get_mcp_tools_and_instructions(server_url)
+        _, system_prompt = utils.get_mcp_tools_and_instructions(server_url)
 
-        verbose_logger.debug(f"Full system prompt: {system_prompt}")
+        test_logger.debug(f"Full system prompt: {system_prompt}")
 
         # Verify system prompt contains expected elements
         assert system_prompt, "System prompt should not be empty"
-        assert "NEVER CALL create_blueprint() IMMEDIATELY" in system_prompt, "System prompt should contain behavioral rules"
+        assert "NEVER CALL create_blueprint() IMMEDIATELY" in system_prompt, (
+               "System prompt should contain behavioral rules")
         assert "AVAILABLE DISTRIBUTIONS:" in system_prompt, "System prompt should contain available distributions"
         assert "AVAILABLE ARCHITECTURES:" in system_prompt, "System prompt should contain available architectures"
         assert "AVAILABLE IMAGE TYPES:" in system_prompt, "System prompt should contain available image types"
@@ -718,119 +735,66 @@ class TestLLMUtils:
         print("✓ System prompt correctly extracted with all expected elements")
         print(f"System prompt length: {len(system_prompt)} characters")
 
-    def test_tool_parameter_casting(self, mcp_server_thread, verbose_logger):
+    # pylint: disable=redefined-outer-name
+    def test_tool_parameter_casting(self, mcp_server_thread, test_logger):
         """Test that tool arguments are properly cast according to MCP parameter specifications."""
-        server_url = mcp_server_thread
         utils = LLMTestUtils()
 
-        # Get tools from MCP server
-        tools, system_prompt = utils.get_mcp_tools_and_instructions(server_url)
-
-        # Find the get_openapi tool (which expects response_size as integer)
-        get_openapi_tool = None
-        for tool in tools:
-            if tool['function']['name'] == 'get_openapi':
-                get_openapi_tool = tool
-                break
-
-        assert get_openapi_tool is not None, "get_openapi tool not found"
-
-        # Test casting string to integer
-        test_args = {'response_size': '7'}  # String that should be cast to int
-
-        # Get the raw MCP tools (not converted to OpenAI format) using a fresh session
-        session = requests.Session()
-        session_id = None
-
-        # Initialize session
-        init_request = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {},
-                    "resources": {},
-                    "prompts": {}
-                },
-                "clientInfo": {
-                    "name": "test-client",
-                    "version": "1.0.0"
+        # Test casting with controlled data
+        test_tools = [{
+            'name': 'get_openapi',
+            'inputSchema': {
+                'properties': {
+                    'response_size': {'type': 'integer'}
                 }
             }
-        }
+        }]
 
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream'
-        }
+        # Test casting string to integer
+        test_args = {'response_size': '7'}
+        cast_args = utils.cast_tool_args(test_args, 'get_openapi', test_tools)
 
-        response = session.post(server_url, json=init_request, headers=headers, timeout=10)
-        assert response.status_code == 200
-
-        # Extract session ID from response headers
-        session_id = response.headers.get('mcp-session-id')
-        if not session_id:
-            session_id = response.headers.get('Mcp-Session-Id')
-
-        # Send initialized notification
-        if session_id:
-            headers['mcp-session-id'] = session_id
-
-        initialized_notification = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        }
-
-        session.post(server_url, json=initialized_notification, headers=headers, timeout=10)
-
-        # Get tools list
-        tools_request = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        }
-
-        tools_response = session.post(server_url, json=tools_request, headers=headers, timeout=10)
-        assert tools_response.status_code == 200, f"Tools list failed: {
-            tools_response.status_code} - {tools_response.text}"
-
-        tools_data = utils._parse_mcp_response(tools_response.text)
-
-        # Extract tools from response
-        if isinstance(tools_data, list) and len(tools_data) > 0:
-            tools_result = tools_data[0].get('result', {})
-        else:
-            tools_result = tools_data.get('result', {})
-
-        raw_tools = tools_result.get('tools', [])
-
-        # Test the casting function
-        cast_args = utils._cast_tool_args(test_args, 'get_openapi', raw_tools)
-
-        verbose_logger.debug(f"Original args: {test_args}")
-        verbose_logger.debug(f"Cast args: {cast_args}")
+        test_logger.debug(f"Original args: {test_args}")
+        test_logger.debug(f"Cast args: {cast_args}")
 
         # Verify that response_size was cast to integer
         assert isinstance(cast_args['response_size'], int), f"response_size should be int, got {
             type(cast_args['response_size'])}"
         assert cast_args['response_size'] == 7, f"response_size should be 7, got {cast_args['response_size']}"
 
+        print("✓ Parameter casting test passed - string '7' was successfully cast to integer 7")
+
         # Test with actual tool call to ensure it works end-to-end
         try:
-            tool_response = utils.call_tool('get_openapi', test_args, server_url, verbose_logger, system_prompt)
-            verbose_logger.debug(f"Tool call successful: {tool_response}")
+            server_url = mcp_server_thread
+            tool_response = utils.call_tool('get_openapi', test_args, server_url, test_logger)
+            test_logger.debug(f"Tool call successful: {tool_response}")
 
             # Verify we got a response (the tool should work with cast parameters)
             assert tool_response is not None, "Tool should return a response"
 
-            print("✓ Parameter casting test passed - string '7' was successfully cast to integer 7")
+            print("✓ End-to-end tool call with parameter casting successful")
 
-        except Exception as e:
-            verbose_logger.error(f"Tool call failed: {e}")
+        except (ToolCallError, MCPResponseError, LLMAPIError, json.JSONDecodeError, KeyError, ValueError) as e:
+            test_logger.error(f"Tool call failed: {e}")
             # The test should still pass if casting worked, even if the tool call fails for other reasons
             print(f"⚠ Tool call failed but parameter casting worked: {e}")
 
-        print(f"✓ Parameter casting functionality verified")
+        print("✓ Parameter casting functionality verified")
+
+
+@pytest.fixture
+def test_logger(request):
+    """Get a test logger that doesn't conflict with verbose_logger fixture name."""
+    logger = logging.getLogger(__name__ + "_test")
+
+    verbosity = request.config.getoption('verbose', default=0)
+
+    if verbosity >= 3:
+        logger.setLevel(logging.DEBUG)
+    elif verbosity >= 2:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.WARNING)
+
+    return logger
