@@ -132,7 +132,7 @@ or use it via "Streamable HTTP"
 start the server:
 
 ```
-podman run --net host --rm ghcr.io/osbuild/image-builder-mcp:latest
+podman run --net host --rm ghcr.io/osbuild/image-builder-mcp:latest http
 ```
 
 then integrate:
@@ -150,4 +150,14 @@ then integrate:
         }
     }
 }
+```
+
+### Generic STDIO
+
+For generic integration into other tools via STDIO, you should set the environment variables
+`IMAGE_BUILDER_CLIENT_ID` and `IMAGE_BUILDER_CLIENT_SECRET` and use this command for an
+integration using podman:
+
+```bash
+podman run --env IMAGE_BUILDER_CLIENT_ID --env IMAGE_BUILDER_CLIENT_SECRET --interactive --rm ghcr.io/osbuild/image-builder-mcp:latest
 ```
