@@ -400,6 +400,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         except ValueError as e:
             return self.no_auth_error(e)
         try:
+            if os.environ.get("IMAGE_BUILDER_MCP_DISABLE_DESCRIPTION_WATERMARK", "").lower() != "true":
+                desc_parts = [data.get("description", ""), "Blueprint created via image-builder-mcp"]
+                data["description"] = "\n".join(filter(None, desc_parts))
             # TBD: programmatically check against openapi
             response = client.make_request(
                 "blueprints", method="POST", data=data)
