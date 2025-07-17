@@ -53,6 +53,11 @@ For stdio mode:
 make run-stdio
 ```
 
+### Additional info
+
+You can set the environment variable `IMAGE_BUILDER_MCP_DISABLE_DESCRIPTION_WATERMARK` to `True` to avoid
+adding a hint to `image-builder-mcp` in newly created blueprints.
+
 ## Integrations
 
 ### VSCode
