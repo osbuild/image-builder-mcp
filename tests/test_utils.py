@@ -21,6 +21,67 @@ def should_skip_llm_tests() -> bool:
     return not all(os.getenv(var) for var in required_vars)
 
 
+def load_llm_configurations() -> Tuple[List[Dict[str, Optional[str]]], Optional[Dict[str, str]]]:
+    """Load LLM configurations from test_config.json file."""
+    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'test_config.json')
+
+    if not os.path.exists(config_file):
+        # Fallback to environment variables for backward compatibility
+        if not should_skip_llm_tests():
+            return [{
+                'name': 'Default Model',
+                'MODEL_API': os.getenv('MODEL_API'),
+                'MODEL_ID': os.getenv('MODEL_ID'),
+                'USER_KEY': os.getenv('USER_KEY')
+            }], None
+        return [], None
+
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        configurations = []
+        for llm_config in config.get('llm_configurations', []):
+            # Substitute environment variables in configuration
+            resolved_config: Dict[str, Optional[str]] = {}
+            for key, value in llm_config.items():
+                if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                    env_var = value[2:-1]  # Remove ${ and }
+                    resolved_value = os.getenv(env_var)
+                    if resolved_value:
+                        resolved_config[key] = resolved_value
+                    else:
+                        # Skip this configuration if required env var is missing
+                        break
+                else:
+                    resolved_config[key] = value
+
+            # Only add configuration if all required variables are present
+            if all(key in resolved_config and resolved_config[key]
+                   for key in ['MODEL_API', 'MODEL_ID', 'USER_KEY']):
+                configurations.append(resolved_config)
+        guardian_llm: Optional[Dict[str, str]] = config.get('guardian_llm')
+        return configurations, guardian_llm
+
+    except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
+        logging.warning("Error loading test_config.json: %s. Falling back to environment variables.", e)
+        # Fallback to environment variables
+        if not should_skip_llm_tests():
+            return [{
+                'name': 'Default Model',
+                'MODEL_API': os.getenv('MODEL_API'),
+                'MODEL_ID': os.getenv('MODEL_ID'),
+                'USER_KEY': os.getenv('USER_KEY')
+            }], None
+        return [], None
+
+
+def should_skip_llm_matrix_tests() -> bool:
+    """Check if LLM matrix tests should be skipped."""
+    configurations, _ = load_llm_configurations()
+    return len(configurations) == 0
+
+
 def cleanup_server_process(server_process: multiprocessing.Process) -> None:
     """Helper function to properly cleanup a server process."""
     if server_process.is_alive():
@@ -153,16 +214,17 @@ def start_mcp_server_process():
 class CustomVLLMModel(DeepEvalBaseLLM):
     """Custom LLM model for deepeval that uses vLLM with OpenAI-compatible API."""
 
-    def __init__(self, verbose_logger):  # pylint: disable=redefined-outer-name
+    def __init__(self, api_url: str, model_id: str, api_key: str, verbose_logger: logging.Logger):  # pylint: disable=redefined-outer-name
         super().__init__()
-        self.api_url = os.getenv('MODEL_API')
-        self.model_id = os.getenv('MODEL_ID')
-        self.api_key = os.getenv('USER_KEY')
+        self.api_url = api_url
+        self.model_id = model_id
+        self.api_key = api_key
 
         if not all([self.api_url, self.model_id, self.api_key]):
             raise ValueError("MODEL_API, MODEL_ID, and USER_KEY environment variables must be set")
 
         verbose_logger.info("Using custom vLLM model: %s", self.model_id)
+        verbose_logger.info("Using custom vLLM API URL: %s", self.api_url)
 
     def load_model(self, *args, **kwargs):
         # For API-based models, we don't need to load anything
@@ -256,14 +318,15 @@ class CustomVLLMModel(DeepEvalBaseLLM):
 class MCPAgentWrapper:
     """Wrapper for MCP agent functionality to work with deepeval."""
 
-    def __init__(self, server_url: str, verbose_logger: logging.Logger):  # pylint: disable=redefined-outer-name
+    # pylint: disable=redefined-outer-name,too-many-arguments
+    def __init__(self, server_url: str, api_url: str, model_id: str, api_key: str, verbose_logger: logging.Logger):
         self.server_url = server_url
         self.session: requests.Session = requests.Session()
         self.tools: List[Dict[str, Any]] = []
         self.system_prompt = ""
         self.session_id: Optional[str] = None
         # Initialize custom LLM for agent interactions
-        self.custom_llm = CustomVLLMModel(verbose_logger)
+        self.custom_llm = CustomVLLMModel(api_url, model_id, api_key, verbose_logger)
         self._initialize()
 
     def _initialize(self):

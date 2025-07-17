@@ -12,3 +12,6 @@ podman
 repo
 RHEL
 Streamable
+OAuth
+Pytest
+deepeval

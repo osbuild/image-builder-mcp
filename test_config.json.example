@@ -1,0 +1,28 @@
+{
+  "llm_configurations": [
+    {
+      "name": "Primary Model",
+      "MODEL_ID": "…",
+      "MODEL_API": "https://…",
+      "USER_KEY": ""
+    },
+    {
+      "name": "Alternative Model 1",
+      "MODEL_ID": "…",
+      "MODEL_API": "https://…",
+      "USER_KEY": "…"
+    },
+    {
+      "name": "Alternative Model 2",
+      "MODEL_ID": "…",
+      "MODEL_API": "https://…",
+      "USER_KEY": "…"
+    }
+  ],
+  "guardian_llm" : {
+    "name": "Optional model for Test metrics",
+    "MODEL_ID": "…",
+    "MODEL_API": "…",
+    "USER_KEY": "…"
+  }
+}
