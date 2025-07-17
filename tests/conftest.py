@@ -2,6 +2,7 @@
 Pytest configuration and shared fixtures for image-builder-mcp tests.
 """
 
+import logging
 import pytest
 from .test_utils import start_mcp_server_process, cleanup_server_process
 
@@ -39,3 +40,20 @@ def mcp_server_thread():  # pylint: disable=too-many-locals
         yield server_url
     finally:
         cleanup_server_process(server_process)
+
+
+@pytest.fixture
+def verbose_logger(request):
+    """Get a logger that respects pytest verbosity."""
+    logger = logging.getLogger(__name__)
+
+    verbosity = request.config.getoption('verbose', default=0)
+
+    if verbosity >= 3:
+        logger.setLevel(logging.DEBUG)
+    elif verbosity >= 2:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.WARNING)
+
+    return logger
