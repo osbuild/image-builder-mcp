@@ -45,21 +45,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         # a local one (deployed by a customer)
         self.image_builder_mcp_client_id = "mcp"
         self.oauth_enabled = oauth_enabled
-        if stage:
-            api_type = "stage"
-        else:
-            api_type = "production"
 
         self.logger = logging.getLogger("ImageBuilderMCP")
 
-        general_intro = f"""Function for Redhat console.redhat.com image-builder osbuild.org.
-        Interacting with the {api_type} API.
-        Use this to create custom Redhat enterprise, Centos or Fedora Linux disk images."""
-
-        super().__init__(
-            name="Image Builder MCP Server",
-            instructions=general_intro
-        )
         # could be used once we have e.g. "/distributions" available without authentication
         self.client_noauth = ImageBuilderClient(
             client_id=None,
@@ -68,6 +56,102 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             proxy_url=self.proxy_url,
             image_builder_mcp_client_id=self.image_builder_mcp_client_id,
             oauth_enabled=self.oauth_enabled
+        )
+
+        # use dynamic attributes to get the distributions, architectures and image types
+        # once the API is changed to un-authenticated access
+        # self.distributions = self.client_noauth.make_request("distributions")
+        self.distributions = [
+            {'description': 'CentOS Stream 9', 'name': 'centos-9'},
+            {'description': 'Fedora Linux 37', 'name': 'fedora-37'},
+            {'description': 'Fedora Linux 38', 'name': 'fedora-38'},
+            {'description': 'Fedora Linux 39', 'name': 'fedora-39'},
+            {'description': 'Fedora Linux 40', 'name': 'fedora-40'},
+            {'description': 'Fedora Linux 41', 'name': 'fedora-41'},
+            {'description': 'Fedora Linux 42', 'name': 'fedora-42'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 10 Beta', 'name': 'rhel-10-beta'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 10', 'name': 'rhel-10.0'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 10', 'name': 'rhel-10'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8.10'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-84'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-85'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-86'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-87'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-88'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-89'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9 beta', 'name': 'rhel-9-beta'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-9.6'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-9'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-90'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-91'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-92'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-93'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-94'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-95'}
+        ]
+
+        try:
+            # TBD: change openapi spec to have a proper schema-enum
+            # for image types and architectures
+            self.logger.info("Getting openapi")
+            openapi = json.loads(self.get_openapi(1))
+
+            self.image_types = list(openapi["components"]["schemas"]["ImageTypes"]["enum"])
+            self.image_types.sort()
+
+            self.architectures = list(openapi["components"]["schemas"]["ImageRequest"]
+                                      ["properties"]["architecture"]["enum"])
+            self.architectures.sort()
+
+            self.logger.info("Supported image types: %s", self.image_types)
+            self.logger.info("Supported architectures: %s", self.architectures)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            raise ValueError("Error getting openapi for image types and architectures") from e
+
+        general_intro = f"""You are a comprehensive Linux Image Builder assistant that creates custom
+        Linux disk images, ISOs, and virtual machine images.
+
+        You can build images for multiple Linux distributions including:
+        - Red Hat Enterprise Linux (RHEL)
+        - CentOS Stream
+        - Fedora Linux
+
+        You create various image formats suitable for:
+        - Cloud deployments (AWS, Azure, GCP)
+        - Virtual machines (VMware, guest images)
+        - Edge computing devices
+        - Container registries (OCI)
+        - Bare metal installations (ISO installers)
+        - WSL (Windows Subsystem for Linux)
+
+        This service uses Red Hat's console.redhat.com image-builder osbuild.org infrastructure but serves
+        general Linux image building needs across the entire ecosystem.
+
+        🚨 CRITICAL BEHAVIORAL RULES:
+
+        1. **NEVER CALL create_blueprint() IMMEDIATELY** when a user asks to create an image
+        2. **ALWAYS GATHER COMPLETE INFORMATION FIRST** through a conversational approach
+        3. **ASK SPECIFIC QUESTIONS** to collect all required details before making any API calls
+        4. **BE HELPFUL AND CONSULTATIVE** - guide users through the image creation process
+
+        WHEN A USER ASKS TO CREATE AN IMAGE OR ISO:
+        - Start by asking about their specific needs and use case
+        - Ask for blueprint name, distribution, architecture, image type, etc.
+        - For RHEL images: Always ask about registration preferences
+        - Ask about custom user accounts and any special configurations
+        - Only call create_blueprint() after you have ALL required information
+
+        AVAILABLE DISTRIBUTIONS: {', '.join([d['name'] for d in self.distributions])}
+        AVAILABLE ARCHITECTURES: {', '.join(self.architectures)}
+        AVAILABLE IMAGE TYPES: {', '.join(self.image_types)}
+
+        Your goal is to be a knowledgeable consultant who helps users create the perfect
+        custom Linux image, ISO, or virtual machine image for their specific deployment needs."""
+
+        super().__init__(
+            name="Image Builder MCP Server",
+            instructions=general_intro
         )
 
         # cache the client for all users
@@ -110,59 +194,6 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
                           self.blueprint_compose
                           # self.compose
                           ]
-
-        # use dynamic attributes to get the distributions, architectures and image types
-        # once the API is changed to un-authenticated access
-        # self.distributions = self.client_noauth.make_request("distributions")
-        self.distributions = [
-            {'description': 'CentOS Stream 9', 'name': 'centos-9'},
-            {'description': 'Fedora Linux 37', 'name': 'fedora-37'},
-            {'description': 'Fedora Linux 38', 'name': 'fedora-38'},
-            {'description': 'Fedora Linux 39', 'name': 'fedora-39'},
-            {'description': 'Fedora Linux 40', 'name': 'fedora-40'},
-            {'description': 'Fedora Linux 41', 'name': 'fedora-41'},
-            {'description': 'Fedora Linux 42', 'name': 'fedora-42'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 10 Beta', 'name': 'rhel-10-beta'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 10', 'name': 'rhel-10.0'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 10', 'name': 'rhel-10'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8.10'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-84'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-85'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-86'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-87'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-88'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-89'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9 beta', 'name': 'rhel-9-beta'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-9.6'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-9'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-90'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-91'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-92'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-93'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-94'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-95'}
-        ]
-
-        # TBD: get from openapi
-        self.architectures = ["x86_64", "aarch64"]
-
-        # TBD: get from openapi
-        self.image_types = ["aws",
-                            "azure",
-                            "edge-commit",
-                            "edge-installer",
-                            "gcp",
-                            "guest-image",
-                            "image-installer",
-                            "oci"
-                            "vsphere",
-                            "vsphere-ova",
-                            "wsl",
-                            "ami",
-                            "rhel-edge-commit",
-                            "rhel-edge-installer",
-                            "vhd"]
 
         for f in tool_functions:
             tool = Tool.from_function(f)
@@ -264,15 +295,15 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
                 image_name: Optional[str] = None,
                 image_description: Optional[str] = None) -> str:
         """Create a new, up to date, operating system image.
-        Assure that the data is according to ComposeRequest descriped in openapi.
-        Ask user for more details to be able to fill "data" properly before calling this.
+        Ensure that the data follows the ComposeRequest structure described in the OpenAPI spec.
+        Gather all required details from the user before calling this function.
 
         Args:
-            distribution: the distribution to use (ask for one of {distributions})
-            architecture: the architecture to use (ask for one of {architectures})
-            image_type: the type of image to create (ask for one of {image_types})
-            image_name: optional name for the image (ask if the user wants to set this)
-            image_description: optional description for the image (ask if the user wants to set this)
+            distribution: the distribution to use (available: {distributions})
+            architecture: the architecture to use (available: {architectures})
+            image_type: the type of image to create (available: {image_types})
+            image_name: optional name for the image (ask user if they want to set this)
+            image_description: optional description for the image (ask user if they want to set this)
         """
         try:
             client = self.get_client(get_http_headers())
@@ -318,7 +349,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
 
     def blueprint_compose(self, blueprint_uuid: str) -> str:
         """Compose an image from a blueprint UUID created with create_blueprint, get_blueprints.
-        If the UUID is not clear, ask the user if we should create a new blueprint with create_blueprint
+        If the UUID is not clear, ask the user whether to create a new blueprint with create_blueprint
         or use an existing blueprint from get_blueprints.
 
         Args:
@@ -382,15 +413,29 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return f"Error: {str(e)}"
 
     def create_blueprint(self, data: dict) -> str:
-        """Start with this tool if a user wants to create an up to date, or customized linux image.
-        Assure that the data is according to CreateBlueprintRequest described in openapi.
-        Always ask the user for more details to be able to fill "data" properly before calling this.
-        Never come up with the data yourself.
-        Ask again if there is no username specified if the user wants to use a custom username.
-        Ask specifically if the user wants to enable registration for RHEL images.
+        """Create a custom Linux image blueprint.
+
+        ⚠️ CRITICAL: Only call this function after you have gathered ALL required information from the user.
+
+        INFORMATION YOU MUST COLLECT FROM THE USER BEFORE CALLING:
+        1. Blueprint name ("What would you like to name your blueprint? or should I generate a name?")
+        2. Distribution ("Which distribution do you want? Available: {distributions}")
+        3. Architecture ("Which architecture? Available: {architectures}")
+        4. Image type ("What image type do you need? Available: {image_types} or take guest-image as default")
+        5. Username ("Do you want to create a custom user account? If so, what username?")
+        6. For RHEL images specifically: "Do you want to enable registration for Red Hat services?"
+        7. Any customizations ("Do you need any specific packages, services, or configurations?")
+
+        YOUR PROCESS AS THE AI ASSISTANT:
+        1. If you haven't already, call get_openapi to understand the CreateBlueprintRequest structure
+        2. Ask the user for ALL the required information listed above through conversation
+        3. Only after collecting all information, call this function with properly formatted data
+
+        Never make assumptions or fill in data yourself unless the user explicitly asks for it.
+        Always ask the user for explicit input through conversation.
 
         Args:
-            data: call the tool get_openapi and format the data according to CreateBlueprintRequest
+            data: Complete blueprint data formatted according to CreateBlueprintRequest from OpenAPI spec
 
         Returns:
             The response from the image-builder API
@@ -429,7 +474,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         """Get all blueprints without details.
         For "all" set "response_size" to None
         This starts a fresh search.
-        Call get_more_blueprints to get more.
+        Use get_more_blueprints to get additional results.
 
         Args:
             response_size: number of items returned (use 7 as default)
@@ -646,7 +691,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         Use this to get the latest image builds.
         For "all" set "response_size" to None
         This starts a fresh search.
-        Call get_more_composes to get more.
+        Use get_more_composes to get additional results.
 
         Args:
             response_size: number of items returned (use 7 as default)
