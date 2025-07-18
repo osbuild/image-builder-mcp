@@ -23,7 +23,7 @@ repos:
     rev: 'v1.11.1'
     hooks:
       - id: mypy
-        additional_dependencies: ["PyYAML", "types-PyYAML", "types-requests", "fastmcp", "requests", "PyJWT"]
+        additional_dependencies: ["PyYAML", "types-PyYAML", "types-requests", "fastmcp", "requests", "PyJWT", "deepeval"]
   - repo: https://github.com/hhatto/autopep8
     rev: v2.3.0
     hooks:
@@ -35,4 +35,4 @@ repos:
         # always pass all classes, otherwise e.g. tests fail
         pass_filenames: false
         args: [--recursive=y, .]
-        additional_dependencies: ["PyYAML", "types-PyYAML", "types-requests", "pytest", "fastmcp", "requests", "PyJWT"]
+        additional_dependencies: ["PyYAML", "types-PyYAML", "types-requests", "pytest", "fastmcp", "requests", "PyJWT", "deepeval"]

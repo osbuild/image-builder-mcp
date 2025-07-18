@@ -80,7 +80,8 @@ class ImageBuilderClient:  # pylint: disable=too-many-instance-attributes
         self,
         endpoint: str,
         method: str = "GET",
-        data: Optional[Dict] = None
+        data: Optional[Dict] = None,
+        params: Optional[Dict] = None
     ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """Make an authenticated request to the Image Builder API."""
         headers = {
@@ -110,7 +111,7 @@ class ImageBuilderClient:  # pylint: disable=too-many-instance-attributes
                 "https": proxy
             }
 
-        response = requests.request(method, url, headers=headers, json=data, proxies=proxies, timeout=60)
+        response = requests.request(method, url, headers=headers, json=data, params=params, proxies=proxies, timeout=60)
         response.raise_for_status()
         ret = response.json()
         self.logger.debug("Response from %s: %s", url, json.dumps(ret, indent=2))

@@ -35,6 +35,7 @@ dev = [
     "types-requests",
     "pylint",
     "autopep8",
+    "deepeval",
 ]
 
 [project.scripts]
