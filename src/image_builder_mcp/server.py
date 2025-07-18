@@ -147,7 +147,15 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         AVAILABLE IMAGE TYPES: {', '.join(self.image_types)}
 
         Your goal is to be a knowledgeable consultant who helps users create the perfect
-        custom Linux image, ISO, or virtual machine image for their specific deployment needs."""
+        custom Linux image, ISO, or virtual machine image for their specific deployment needs.
+
+        IMPORTANT: When you decide a tool is needed, emit only the JSON tool_call block (no extra narrative).
+        Use the tool_call field exactly as specified in the API schema
+
+        CRITICAL TOOL CALLING INSTRUCTIONS:
+        When you need to call a tool, you MUST use the tool_calls format, NOT plain text.
+
+        """
 
         super().__init__(
             name="Image Builder MCP Server",
@@ -471,20 +479,15 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         return f"https://{client.domain}/insights/image-builder/imagewizard/{blueprint_id}"
 
     def get_blueprints(self, response_size: int, search_string: str | None = None) -> str:
-        """Get all blueprints without details.
-        For "all" set "response_size" to None
-        This starts a fresh search.
-        Use get_more_blueprints to get additional results.
+        """EXECUTE: Show user's image blueprints (saved image templates/configurations for
+        Linux distributions, packages, users).
 
         Args:
             response_size: number of items returned (use 7 as default)
             search_string: substring to search for in the name (optional)
 
         Returns:
-            List of blueprints
-
-        Raises:
-            Exception: If the image-builder connection fails.
+            List of blueprints with their UUIDs and details
         """
 
         try:
@@ -686,22 +689,39 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return True
         return search_string.lower() in data["image_name"].lower()
 
+    # NOTE: the _doc_ has escaped curly braces as __doc__.format() is called on the docstring
+
     def get_composes(self, response_size: int, search_string: str | None = None) -> str:
-        """Get all composes without details.
-        Use this to get the latest image builds.
-        For "all" set "response_size" to None
-        This starts a fresh search.
-        Use get_more_composes to get additional results.
+        """Get a list of all image builds (composes) with their UUIDs and basic status.
+
+        **ALWAYS USE THIS FIRST** when checking image build status or finding builds.
+        This returns the UUID needed for get_compose_details.
+
+        Common uses:
+        - Check status of recent builds → call this first
+        - Find your latest build → call this first
+        - Get any build information → call this first
 
         Args:
             response_size: number of items returned (use 7 as default)
-            search_string: substring to search for in the name (optional)
+            search_string: optional filter by name substring
 
         Returns:
-            List of composes
+            List of composes with:
+            - uuid: The unique identifier (REQUIRED for get_compose_details)
+            - name: Blueprint name used
+            - status: Current build status
+            - created_at: When the build started
 
-        Raises:
-            Exception: If the image-builder connection fails.
+        Example response:
+        [
+            {{
+                "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "name": "my-rhel-image",
+                "status": "RUNNING",
+                "created_at": "2025-01-18T10:30:00Z"
+            }}
+        ]
         """
         response_size = response_size or self.default_response_size
         if response_size <= 0:
@@ -811,16 +831,28 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return f"Error: {str(e)}"
 
     def get_compose_details(self, compose_identifier: str) -> str:
-        """Get compose details especially for the status of an image build.
+        """Get detailed information about a specific image build.
+
+        ⚠️ REQUIRES: You MUST have the compose UUID from get_composes() first.
+        ⚠️ NEVER call this with generic terms like "latest", "recent", or "my build"
+
+        Process:
+        1. User asks about build status → call get_composes()
+        2. Find the desired compose and copy its UUID
+        3. Call this function with that exact UUID
 
         Args:
-            compose_identifier: the UUID, name or reply_id to query
+            compose_identifier: The exact UUID string from get_composes()
+                            Example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                            NOT: "latest", "recent", "my-image", etc.
 
         Returns:
-            Compose details
-
-        Raises:
-            Exception: If the image-builder connection fails.
+            Detailed compose information including:
+            - Full status and progress
+            - Error messages if failed
+            - Download URLs if completed
+            - Build logs
+            - Artifact details
         """
         if not compose_identifier:
             return "Error: Compose UUID is required"

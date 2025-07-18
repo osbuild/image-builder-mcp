@@ -10,9 +10,9 @@ import multiprocessing
 from typing import Dict, List, Any, Tuple, Optional
 
 import requests
+from pydantic import BaseModel
 from deepeval.models.base_model import DeepEvalBaseLLM
-from deepeval.test_case import LLMTestCase, ToolCall
-from deepeval.tracing import observe, update_current_span
+from deepeval.test_case import ToolCall
 
 
 def should_skip_llm_tests() -> bool:
@@ -214,43 +214,33 @@ def start_mcp_server_process():
 class CustomVLLMModel(DeepEvalBaseLLM):
     """Custom LLM model for deepeval that uses vLLM with OpenAI-compatible API."""
 
-    def __init__(self, api_url: str, model_id: str, api_key: str, verbose_logger: logging.Logger):  # pylint: disable=redefined-outer-name
-        super().__init__()
+    def __init__(
+        self,
+        api_url: Optional[str] = None,
+        model_id: Optional[str] = None,
+        api_key: Optional[str] = None,
+        temperature: float = 0,
+        **kwargs,
+    ):
+        if not api_url:
+            raise ValueError("api_url must be provided for CustomVLLMModel")
+        if not model_id:
+            raise ValueError("model_id must be provided for CustomVLLMModel")
+
         self.api_url = api_url
-        self.model_id = model_id
-        self.api_key = api_key
+        self.model_id = model_id or "default"
+        self.api_key = api_key or ""
 
-        if not all([self.api_url, self.model_id, self.api_key]):
-            raise ValueError("MODEL_API, MODEL_ID, and USER_KEY environment variables must be set")
+        if temperature < 0:
+            raise ValueError("Temperature must be >= 0.")
+        self.temperature = temperature
+        super().__init__(self.model_id)
 
-        verbose_logger.info("Using custom vLLM model: %s", self.model_id)
-        verbose_logger.info("Using custom vLLM API URL: %s", self.api_url)
+    # pylint: disable=arguments-differ
+    def generate(  # type: ignore[override]
+        self, prompt: str, schema: Optional[BaseModel] = None
+    ) -> str:
 
-    def load_model(self, *args, **kwargs):
-        # For API-based models, we don't need to load anything
-        return None
-
-    def generate(self, *args, **kwargs):
-        """Generate text using the custom vLLM endpoint."""
-        prompt = self._extract_prompt(args, kwargs)
-        schema = kwargs.get('schema', None)
-
-        try:
-            content = self._call_llm_api(prompt)
-            return self._process_response(content, schema)
-        except (requests.RequestException, requests.Timeout, ValueError) as e:
-            return self._handle_error(e, schema)
-
-    def _extract_prompt(self, args, kwargs):
-        """Extract prompt from args or kwargs."""
-        if 'prompt' in kwargs:
-            return kwargs['prompt']
-        if args:
-            return args[0]
-        raise ValueError("prompt must be provided as keyword argument or first positional argument")
-
-    def _call_llm_api(self, prompt):
-        """Call the LLM API and return the content."""
         headers = {
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {self.api_key}'
@@ -258,8 +248,7 @@ class CustomVLLMModel(DeepEvalBaseLLM):
         payload = {
             "model": self.model_id,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 2000
+            "temperature": self.temperature,
         }
 
         response = requests.post(
@@ -272,61 +261,50 @@ class CustomVLLMModel(DeepEvalBaseLLM):
 
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        return content or "I apologize, but I cannot provide a response to that query."
 
-    def _process_response(self, content, schema):
-        """Process the response content, optionally with schema."""
-        if not schema:
-            return content
-
-        try:
-            # Try to extract JSON from the response
-            json_start = content.find('{')
-            json_end = content.rfind('}') + 1
-            if json_start != -1 and json_end > json_start:
-                json_content = content[json_start:json_end]
-                parsed_data = json.loads(json_content)
-                return schema(**parsed_data)
-            # If no JSON found, create a simple response structure
-            return schema(steps=["Unable to generate structured response"])
-        except (json.JSONDecodeError, TypeError, ValueError):
-            # Fallback if structured parsing fails
-            if hasattr(schema, 'steps'):
-                return schema(steps=["Unable to generate structured response"])
-            return schema()
-
-    def _handle_error(self, error, schema):
-        """Handle errors and return appropriate fallback."""
-        fallback_response = f"Error generating response: {str(error)}"
+        ret = content
         if schema:
             try:
-                if hasattr(schema, 'steps'):
-                    return schema(steps=[fallback_response])
-                return schema()
-            except (TypeError, ValueError):
-                pass
-        return fallback_response
+                # remove markdown code block markers
+                content = content.replace("```json", "").replace("```", "")
+                ret = schema.model_validate_json(content)
+                print(f"Model {self.model_id} replied for {payload}\ņwith {ret}")
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                error_message = (f"The LLM {self.model_id} was expected to return a valid JSON object "
+                                 f"compatible with the schema {schema}. but it returned {content}."
+                                 f"Error: {e}")
+                raise ValueError(error_message) from e
 
-    async def a_generate(self, *args, **kwargs):
-        """Async generate - reusing sync version for simplicity."""
-        return self.generate(*args, **kwargs)
+            return ret
 
-    def get_model_name(self, *args, **kwargs):
-        return f"Custom vLLM ({self.model_id})"
+        return content
+
+    # pylint: disable=arguments-differ
+    async def a_generate(  # type: ignore[override]
+        self, prompt: str, schema: Optional[BaseModel] = None
+    ) -> str:
+        # For simplicity, reuse sync version
+        return self.generate(prompt, schema)
+
+    def load_model(self):
+        # For API-based models, we don't need to load anything
+        return None
+
+    def get_model_name(self):
+        return f"{self.model_id} (vLLM)"
 
 
 class MCPAgentWrapper:
     """Wrapper for MCP agent functionality to work with deepeval."""
 
-    # pylint: disable=redefined-outer-name,too-many-arguments
-    def __init__(self, server_url: str, api_url: str, model_id: str, api_key: str, verbose_logger: logging.Logger):
+    def __init__(self, server_url: str, api_url: str, model_id: str, api_key: str):
         self.server_url = server_url
         self.session: requests.Session = requests.Session()
         self.tools: List[Dict[str, Any]] = []
-        self.system_prompt = ""
+        self.system_prompt = "You are a helpful assistant that can use the given tools to help the user."
         self.session_id: Optional[str] = None
         # Initialize custom LLM for agent interactions
-        self.custom_llm = CustomVLLMModel(api_url, model_id, api_key, verbose_logger)
+        self.custom_llm = CustomVLLMModel(api_url=api_url, model_id=model_id, api_key=api_key)
         self._initialize()
 
     def _initialize(self):
@@ -520,6 +498,8 @@ class MCPAgentWrapper:
 
         response = requests.post(f"{self.custom_llm.api_url}/chat/completions",
                                  json=payload, headers=headers, timeout=30)
+        print(f"LLM payload: {payload}")
+        print(f"LLM response: {response.text}")
 
         if response.status_code != 200:
             raise MCPError(f"LLM API call failed: {response.status_code} - {response.text}")
@@ -579,7 +559,6 @@ class MCPAgentWrapper:
 
         return tools_intended
 
-    @observe()
     def query_with_tools(self, user_input: str) -> Tuple[str, List[ToolCall]]:
         """Query the LLM with available tools and return response and tools used."""
         # Prepare messages
@@ -608,18 +587,8 @@ class MCPAgentWrapper:
         if not final_content:
             final_content = "I understand your request, but I cannot provide a specific response at this time."
 
-        # Update span for tracing
-        update_current_span(
-            test_case=LLMTestCase(
-                input=user_input,
-                actual_output=final_content,
-                tools_called=tools_called
-            )
-        )
-
         return final_content, tools_called
 
-    @observe()
     def check_tool_intentions(self, user_input: str) -> Tuple[str, List[ToolCall]]:
         """Check LLM tool intentions without executing tools - for behavioral testing."""
         # Prepare messages
@@ -649,14 +618,5 @@ class MCPAgentWrapper:
         if not final_content:
             final_content = ("I understand your request, but I cannot determine the appropriate "
                              "response or tools to use.")
-
-        # Update span for tracing
-        update_current_span(
-            test_case=LLMTestCase(
-                input=user_input,
-                actual_output=final_content,
-                tools_called=tools_intended
-            )
-        )
 
         return final_content, tools_intended

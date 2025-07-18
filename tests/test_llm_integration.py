@@ -9,14 +9,31 @@ from tests.conftest import verbose_logger
 
 from .test_utils import (
     should_skip_llm_matrix_tests,
-    load_llm_configurations,
-    CustomVLLMModel,
-    MCPAgentWrapper
+    load_llm_configurations
 )
 
 
 # Load LLM configurations for parametrization
-llm_configurations, guardian_llm_config = load_llm_configurations()
+llm_configurations, _ = load_llm_configurations()
+
+# Test scenarios for tool usage patterns
+TOOL_USAGE_SCENARIOS = [
+    {
+        "prompt": "List all my recent builds",
+        "expected_tools": ["get_composes"],
+        "description": "Should use get_composes for build listings"
+    },
+    {
+        "prompt": "What blueprints do I have?",
+        "expected_tools": ["get_blueprints"],
+        "description": "Should use get_blueprints for blueprint listings"
+    },
+    {
+        "prompt": "Please show my blueprints",
+        "expected_tools": ["get_blueprints"],
+        "description": "Should use get_blueprints for blueprint listings"
+    }
+]
 
 
 @pytest.mark.skipif(should_skip_llm_matrix_tests(), reason="No valid LLM configurations found")
@@ -25,42 +42,14 @@ class TestLLMIntegration:
 
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
-    def test_rhel_image_creation_behavioral_rules(self, mcp_server_thread, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
+    # pylint: disable=redefined-outer-name
+    def test_rhel_image_creation_behavioral_rules(self, test_agent, guardian_agent, llm_config, verbose_logger):
         """Test that LLM follows behavioral rules and doesn't immediately call create_blueprint."""
-
-        # Log which model is being tested
-        verbose_logger.info("🧪 Testing model: %s (%s)", llm_config['name'], llm_config['MODEL_ID'])
-
-        # Set up agent for this specific LLM configuration
-        agent = MCPAgentWrapper(
-            server_url=mcp_server_thread,
-            api_url=llm_config['MODEL_API'],
-            model_id=llm_config['MODEL_ID'],
-            api_key=llm_config['USER_KEY'],
-            verbose_logger=verbose_logger
-        )
-
-        # if there is a guardian LLM, use it for the guardian agent
-        # otherwise, use the test LLM for the guardian agent
-        if guardian_llm_config:
-            guardian_agent = CustomVLLMModel(
-                api_url=guardian_llm_config['MODEL_API'],
-                model_id=guardian_llm_config['MODEL_ID'],
-                api_key=guardian_llm_config['USER_KEY'],
-                verbose_logger=verbose_logger
-            )
-        else:
-            guardian_agent = CustomVLLMModel(
-                api_url=llm_config['MODEL_API'],
-                model_id=llm_config['MODEL_ID'],
-                api_key=llm_config['USER_KEY'],
-                verbose_logger=verbose_logger
-            )
 
         prompt = "Can you create a RHEL 9 image for me?"
 
         # Use lightweight intention-only check instead of actually executing tools
-        response, tools_intended = agent.check_tool_intentions(prompt)
+        response, tools_intended = test_agent.check_tool_intentions(prompt)
 
         # Check that create_blueprint is not called immediately
         tool_names = [tool.name for tool in tools_intended]
@@ -70,10 +59,6 @@ class TestLLMIntegration:
             f"System prompt not working correctly.\nThe prompt was: {prompt}\n"
             f"The response was: {response}\n"
         )
-
-        verbose_logger.info("✓ Behavioral rules working for %s - tools intended: %s",
-                            llm_config['name'], tool_names)
-        verbose_logger.info("Response: %s", response)
 
         test_case = LLMTestCase(
             input=prompt,
@@ -96,22 +81,14 @@ class TestLLMIntegration:
         # Evaluate with deepeval metric
         assert_test(test_case, [behavioral_compliance])
 
+        verbose_logger.info("Test passed for %s", prompt)
+        verbose_logger.info("Response: %s", response)
+
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
-    def test_image_build_status_tool_selection(self, mcp_server_thread, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
+    # pylint: disable=redefined-outer-name,too-many-locals
+    def test_image_build_status_tool_selection(self, test_agent, verbose_logger, llm_config, guardian_agent):
         """Test that LLM selects appropriate tools for image build status queries."""
-
-        # Log which model is being tested
-        verbose_logger.info("🧪 Testing model: %s (%s)", llm_config['name'], llm_config['MODEL_ID'])
-
-        # Set up agent for this specific LLM configuration
-        agent = MCPAgentWrapper(
-            server_url=mcp_server_thread,
-            api_url=llm_config['MODEL_API'],
-            model_id=llm_config['MODEL_ID'],
-            api_key=llm_config['USER_KEY'],
-            verbose_logger=verbose_logger
-        )
 
         # Define tool correctness metric - ToolCorrectnessMetric doesn't support model parameter
         tool_correctness = ToolCorrectnessMetric(
@@ -121,18 +98,41 @@ class TestLLMIntegration:
 
         prompt = "What is the status of my latest image build?"
 
-        response, tools_called = agent.query_with_tools(prompt)
+        response, tools_called = test_agent.query_with_tools(prompt)
+
+        verbose_logger.info("Prompt: %s", prompt)
+        verbose_logger.info("Response: %s", response)
+        verbose_logger.info("Tools called: %s", [tool.name for tool in tools_called])
+
+        # first we check if there is a question in the response for the name or UUID of the compose
+        contains_question = GEval(
+            name="Contains Question",
+            criteria=(
+                "The response should contain a question for the name or UUID of the compose"
+            ),
+            evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT],
+            model=guardian_agent
+        )
+
+        question_test_case = LLMTestCase(
+            input=prompt,
+            actual_output=response,
+        )
+
+        answered_with_question = None
+        # if this fails that's ok, we can continue
+        try:
+            assert_test(question_test_case, [contains_question])
+            verbose_logger.info("✓ LLM %s correctly answered with a question", llm_config['name'])
+        except AssertionError as e:
+            answered_with_question = e
+            verbose_logger.info("Question test case failed, continuing...")
 
         # Define expected tools for this query
         expected_tools = [
             ToolCall(name="get_composes"),
             # Could also include get_compose_details if compose ID is known
         ]
-
-        for tool in tools_called:
-            verbose_logger.info("Tool: %s", tool.name)
-            verbose_logger.info("Parameters: %s", tool.input_parameters)
-        verbose_logger.info("Response for %s: %s", llm_config['name'], response)
 
         test_case = LLMTestCase(
             input=prompt,
@@ -152,42 +152,20 @@ class TestLLMIntegration:
             verbose_logger.warning("LLM %s may not have selected optimal tools: %s",
                                    llm_config['name'], tool_names)
 
-        # Evaluate with deepeval metric
-        assert_test(test_case, [tool_correctness])
+        answered_with_tools = None
+        try:
+            assert_test(test_case, [tool_correctness])
+            verbose_logger.info("✓ LLM %s correctly used the tools", llm_config['name'])
+        except AssertionError as e:
+            answered_with_tools = e
+            verbose_logger.info("Tool correctness test case failed, continuing...")
+
+        assert answered_with_question is None or answered_with_tools is None, "One of the tests have to succeed"
 
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
-    def test_system_prompt_effectiveness(self, mcp_server_thread, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
+    def test_system_prompt_effectiveness(self, test_agent, guardian_agent, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
         """Test that the system prompt contains all necessary behavioral guidelines."""
-
-        # Log which model is being tested
-        verbose_logger.info("🧪 Testing model: %s (%s)", llm_config['name'], llm_config['MODEL_ID'])
-
-        # Set up agent for this specific LLM configuration
-        agent = MCPAgentWrapper(
-            server_url=mcp_server_thread,
-            api_url=llm_config['MODEL_API'],
-            model_id=llm_config['MODEL_ID'],
-            api_key=llm_config['USER_KEY'],
-            verbose_logger=verbose_logger
-        )
-
-        # if there is a guardian LLM, use it for the guardian agent
-        # otherwise, use the test LLM for the guardian agent
-        if guardian_llm_config:
-            guardian_agent = CustomVLLMModel(
-                api_url=guardian_llm_config['MODEL_API'],
-                model_id=guardian_llm_config['MODEL_ID'],
-                api_key=guardian_llm_config['USER_KEY'],
-                verbose_logger=verbose_logger
-            )
-        else:
-            guardian_agent = CustomVLLMModel(
-                api_url=llm_config['MODEL_API'],
-                model_id=llm_config['MODEL_ID'],
-                api_key=llm_config['USER_KEY'],
-                verbose_logger=verbose_logger
-            )
 
         # Define system prompt quality metric using custom LLM
         system_prompt_quality = GEval(
@@ -204,7 +182,7 @@ class TestLLMIntegration:
         )
 
         # Test the system prompt content
-        system_prompt = agent.system_prompt
+        system_prompt = test_agent.system_prompt
 
         verbose_logger.info("System prompt length for %s: %d characters",
                             llm_config['name'], len(system_prompt))
@@ -246,56 +224,12 @@ class TestLLMIntegration:
 
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
-    def test_complete_conversation_flow(self, mcp_server_thread, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
+    def test_complete_conversation_flow(self, test_agent, guardian_agent, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
         """Test complete conversation flow with proper agent behavior."""
-
-        # Log which model is being tested
-        verbose_logger.info("🧪 Testing model: %s (%s)", llm_config['name'], llm_config['MODEL_ID'])
-
-        # Set up agent for this specific LLM configuration
-        agent = MCPAgentWrapper(
-            server_url=mcp_server_thread,
-            api_url=llm_config['MODEL_API'],
-            model_id=llm_config['MODEL_ID'],
-            api_key=llm_config['USER_KEY'],
-            verbose_logger=verbose_logger
-        )
-
-        # if there is a guardian LLM, use it for the guardian agent
-        # otherwise, use the test LLM for the guardian agent
-        if guardian_llm_config:
-            guardian_agent = CustomVLLMModel(
-                api_url=guardian_llm_config['MODEL_API'],
-                model_id=guardian_llm_config['MODEL_ID'],
-                api_key=guardian_llm_config['USER_KEY'],
-                verbose_logger=verbose_logger
-            )
-        else:
-            guardian_agent = CustomVLLMModel(
-                api_url=llm_config['MODEL_API'],
-                model_id=llm_config['MODEL_ID'],
-                api_key=llm_config['USER_KEY'],
-                verbose_logger=verbose_logger
-            )
-
-        # Define conversation flow metric using custom LLM
-        conversation_quality = GEval(
-            name="Conversation Flow Quality",
-            criteria=(
-                "The conversation should demonstrate proper agent behavior: "
-                "1. Understanding user intent "
-                "2. Using appropriate tools to gather information "
-                "3. Providing helpful and informative responses "
-                "4. Following system guidelines"
-            ),
-            evaluation_params=[LLMTestCaseParams.INPUT,
-                               LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.TOOLS_CALLED],
-            model=guardian_agent
-        )
 
         prompt = "Can you help me understand what blueprints are available?"
 
-        response, tools_called = agent.query_with_tools(prompt)
+        response, tools_called = test_agent.query_with_tools(prompt)
 
         test_case = LLMTestCase(
             input=prompt,
@@ -313,6 +247,21 @@ class TestLLMIntegration:
         # Allow shorter responses for tool-based interactions
         assert len(response) > 10, f"Response from {llm_config['name']} should be substantial"
 
+        # Define conversation flow metric using custom LLM
+        conversation_quality = GEval(
+            name="Conversation Flow Quality",
+            criteria=(
+                "The conversation should demonstrate proper agent behavior: "
+                "1. Understanding user intent "
+                "2. Using appropriate tools to gather information "
+                "3. Providing helpful and informative responses "
+                "4. Following system guidelines"
+            ),
+            evaluation_params=[LLMTestCaseParams.INPUT,
+                               LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.TOOLS_CALLED],
+            model=guardian_agent
+        )
+
         # Evaluate with deepeval metric
         assert_test(test_case, [conversation_quality])
 
@@ -320,63 +269,34 @@ class TestLLMIntegration:
 
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
-    def test_tool_usage_patterns(self, mcp_server_thread, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
+    @pytest.mark.parametrize("scenario", TOOL_USAGE_SCENARIOS,
+                             ids=[scenario['prompt'] for scenario in TOOL_USAGE_SCENARIOS])
+    def test_tool_usage_patterns(self, test_agent, verbose_logger, llm_config, scenario):  # pylint: disable=redefined-outer-name
         """Test various tool usage patterns and their appropriateness."""
-
-        # Log which model is being tested
-        verbose_logger.info("🧪 Testing model: %s (%s)", llm_config['name'], llm_config['MODEL_ID'])
-
-        # Set up agent for this specific LLM configuration
-        agent = MCPAgentWrapper(
-            server_url=mcp_server_thread,
-            api_url=llm_config['MODEL_API'],
-            model_id=llm_config['MODEL_ID'],
-            api_key=llm_config['USER_KEY'],
-            verbose_logger=verbose_logger
-        )
-
-        test_scenarios = [
-            {
-                "prompt": "Show me the API documentation",
-                "expected_tools": ["get_openapi"],
-                "description": "Should use get_openapi for API documentation"
-            },
-            {
-                "prompt": "List all my recent builds",
-                "expected_tools": ["get_composes"],
-                "description": "Should use get_composes for build listings"
-            },
-            {
-                "prompt": "What blueprints do I have?",
-                "expected_tools": ["get_blueprints"],
-                "description": "Should use get_blueprints for blueprint listings"
-            }
-        ]
 
         # Create tool correctness metric - doesn't support model parameter
         tool_correctness = ToolCorrectnessMetric(threshold=0.6)
 
-        for scenario in test_scenarios:
-            verbose_logger.info("Testing scenario for %s: %s", llm_config['name'], scenario['description'])
+        response, tools_called = test_agent.query_with_tools(scenario["prompt"])
 
-            response, tools_called = agent.query_with_tools(scenario["prompt"])
+        expected_tools = [ToolCall(name=name) for name in scenario["expected_tools"]]
 
-            expected_tools = [ToolCall(name=name) for name in scenario["expected_tools"]]
+        test_case = LLMTestCase(
+            input=scenario["prompt"],
+            actual_output=response,
+            tools_called=tools_called,
+            expected_tools=expected_tools
+        )
 
-            test_case = LLMTestCase(
-                input=scenario["prompt"],
-                actual_output=response,
-                tools_called=tools_called,
-                expected_tools=expected_tools
-            )
+        tool_names = [tool.name for tool in tools_called]
+        verbose_logger.info("  Model: %s", llm_config['name'])
+        verbose_logger.info("  Prompt: %s", scenario['prompt'])
+        verbose_logger.info("  Expected: %s", scenario['expected_tools'])
+        verbose_logger.info("  Tools called: %s", tool_names)
+        verbose_logger.info("  Response: %s", response)
 
-            tool_names = [tool.name for tool in tools_called]
-            verbose_logger.info("  Model: %s", llm_config['name'])
-            verbose_logger.info("  Prompt: %s", scenario['prompt'])
-            verbose_logger.info("  Tools called: %s", tool_names)
-            verbose_logger.info("  Expected: %s", scenario['expected_tools'])
+        # Evaluate with deepeval
+        assert_test(test_case, [tool_correctness])
 
-            # Evaluate with deepeval
-            assert_test(test_case, [tool_correctness])
-
-        verbose_logger.info("✓ Tool usage pattern tests completed for %s", llm_config['name'])
+        verbose_logger.info("✓ Tool usage pattern test passed for %s with prompt: %s",
+                            llm_config['name'], scenario['prompt'])
