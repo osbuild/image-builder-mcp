@@ -14,52 +14,34 @@ This directory contains test suites for the Image Builder MCP server.
 
 The LLM integration tests support matrix testing across multiple LLM configurations using deepeval framework.
 
-### Configuration
+### Setup
 
-Create a `test_config.json` file in the project root with the following structure:
+1. **Copy the example configuration:**
+   ```bash
+   cp test_config.json.example test_config.json
+   ```
 
-```json
-{
-  "llm_configurations": [
-    {
-      "name": "Primary Model",
-      "MODEL_API": "${MODEL_API}",
-      "MODEL_ID": "${MODEL_ID}",
-      "USER_KEY": "${USER_KEY}"
-    },
-    {
-      "name": "Alternative Model 1",
-      "MODEL_API": "${MODEL_API_ALT1}",
-      "MODEL_ID": "${MODEL_ID_ALT1}",
-      "USER_KEY": "${USER_KEY_ALT1}"
-    },
-    {
-      "name": "Alternative Model 2",
-      "MODEL_API": "${MODEL_API_ALT2}",
-      "MODEL_ID": "${MODEL_ID_ALT2}",
-      "USER_KEY": "${USER_KEY_ALT2}"
-    }
-  ]
-}
-```
+2. **Configure your models** by editing `test_config.json` with your API credentials:
+   ```json
+   {
+     "llm_configurations": [
+       {
+         "name": "Primary Model",
+         "MODEL_ID": "granite-3.1",
+         "MODEL_API": "https://your-vLLM-server",
+         "USER_KEY": "your-api-key"
+       }
+     ],
+     "guardian_llm": {
+       "name": "Optional model for Test evaluation",
+       "MODEL_ID": "granite-3.2",
+       "MODEL_API": "https://your-vLLM-server2",
+       "USER_KEY": "your-api-key"
+     }
+   }
+   ```
 
-The `${VARIABLE}` syntax allows environment variable substitution. Set the corresponding environment variables for each model configuration you want to test.
-
-### Environment Variables
-
-For each LLM configuration, you need to set:
-- `MODEL_API` - API endpoint URL (e.g., `https://api.example.com/v1`)
-- `MODEL_ID` - Model identifier (e.g., `gpt-4`, `claude-3`)
-- `USER_KEY` - API authentication key
-
-For multiple configurations, use suffixed variables:
-- Primary: `MODEL_API`, `MODEL_ID`, `USER_KEY`
-- Alternative 1: `MODEL_API_ALT1`, `MODEL_ID_ALT1`, `USER_KEY_ALT1`
-- Alternative 2: `MODEL_API_ALT2`, `MODEL_ID_ALT2`, `USER_KEY_ALT2`
-
-### Running Matrix Tests
-
-The LLM tests will automatically run against all valid configurations:
+### Running Tests
 
 ```bash
 # Run all LLM integration tests across all configured models
@@ -74,19 +56,18 @@ pytest tests/test_llm_integration.py -k "Primary Model" -v
 
 ### Test Output
 
-Each test run clearly indicates which model is being tested:
-
+Each test run indicates which model is being tested:
 ```
 🧪 Testing model: Primary Model (gpt-4-turbo)
 ✓ Behavioral rules working for Primary Model - tools intended: ['get_openapi']
 ```
 
-### Fallback Behavior
+### Fallback
 
-If `test_config.json` is not found or contains no valid configurations, the tests will fall back to using environment variables directly (`MODEL_API`, `MODEL_ID`, `USER_KEY`) for backward compatibility.
+If `test_config.json` is missing, tests fall back to environment variables: `MODEL_API`, `MODEL_ID`, `USER_KEY`.
 
-## Test Requirements
+## Requirements
 
 - Python packages: `pytest`, `deepeval`, `requests`
-- For LLM tests: Valid API credentials for at least one LLM service
-- For server tests: Image Builder API access (optional, can use mocks)
+- Valid API credentials for LLM services
+- Image Builder API access (optional, can use mocks)
