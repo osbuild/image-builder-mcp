@@ -55,7 +55,7 @@ class TestLLMIntegration:
         }]
 
         # Use lightweight intention-only check instead of actually executing tools
-        response, tools_intended = test_agent.query_with_messages(messages)
+        response, tools_intended, _ = test_agent.query_with_messages(messages)
 
         # Check that create_blueprint is not called immediately
         tool_names = [tool.name for tool in tools_intended]
@@ -107,7 +107,7 @@ class TestLLMIntegration:
         messages = [{
             "user": prompt
         }]
-        response, tools_intended = test_agent.query_with_messages(messages)
+        response, tools_intended, _ = test_agent.query_with_messages(messages)
 
         verbose_logger.info("Prompt: %s", prompt)
         verbose_logger.info("Response: %s", response)
@@ -241,7 +241,7 @@ class TestLLMIntegration:
         messages = [{
             "user": prompt
         }]
-        response, tools_intended = test_agent.query_with_messages(messages)
+        response, tools_intended, _ = test_agent.query_with_messages(messages)
 
         test_case = LLMTestCase(
             input=prompt,
@@ -289,7 +289,7 @@ class TestLLMIntegration:
         messages = [{
             "user": scenario["prompt"]
         }]
-        response, tools_intended = test_agent.query_with_messages(messages)
+        response, tools_intended, _ = test_agent.query_with_messages(messages)
 
         expected_tools = [ToolCall(name=name) for name in scenario["expected_tools"]]
 
@@ -317,19 +317,17 @@ class TestLLMIntegration:
 
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
-    def test_llm_paging(self, test_agent, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
+    def test_llm_paging(self, test_agent, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name,too-many-locals
         """Test that the LLM can page through results."""
-        # Reset conversation history for this test
-        test_agent.reset_conversation()
 
         prompt = "List my latest 2 blueprints"
 
         messages = [{
             "user": prompt
         }]
-        response, tools_called = test_agent.execute_tools_with_messages(messages, use_conversation_history=True)
+        response, tools_called, conversation_history = test_agent.execute_tools_with_messages(messages)
 
-        verbose_logger.info("  Model: %s", llm_config['name'])
+        verbose_logger.info("Model: %s", llm_config['name'])
         verbose_logger.info("Prompt: %s", prompt)
         verbose_logger.info("Response: %s", response)
 
@@ -350,11 +348,11 @@ class TestLLMIntegration:
         messages = [{
             "user": follow_up_prompt
         }]
-        response, tools_intended = test_agent.query_with_messages(messages, use_conversation_history=True)
+        response, tools_intended, updated_history = test_agent.query_with_messages(messages, conversation_history)
 
         verbose_logger.info("Follow-up Prompt: %s", follow_up_prompt)
-        verbose_logger.info("Conversation history length: %d", len(test_agent.get_conversation_history()))
-        verbose_logger.info("Full conversation history: %s", test_agent.get_conversation_history())
+        verbose_logger.info("Conversation history length: %d", len(updated_history))
+        verbose_logger.info("Full conversation history:\n%s", "\n".join(list(map(str, updated_history))))
 
         expected_tools = [ToolCall(name="get_blueprints", arguments={"limit": 3, "offset": 2})]
 

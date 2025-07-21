@@ -305,8 +305,6 @@ class MCPAgentWrapper:
         self.session_id: Optional[str] = None
         # Initialize custom LLM for agent interactions
         self.custom_llm = CustomVLLMModel(api_url=api_url, model_id=model_id, api_key=api_key)
-        # Initialize conversation history management
-        self.conversation_history: List[Dict[str, Any]] = []
         self._initialize()
 
     def _initialize(self):
@@ -455,15 +453,22 @@ class MCPAgentWrapper:
         if not self.system_prompt and 'instructions' in result:
             self.system_prompt = result.get('instructions', '')
 
+    def cast_tool_args(self, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Cast tool arguments to the correct type from the MCP server."""
+        # TBD Implement this
+        return tool_args
+
     def call_tool(self, tool_name: str, tool_args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Call a specific tool on the MCP server."""
+
+        tool_args = self.cast_tool_args(tool_args or {})
         tool_request = {
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
             "params": {
                 "name": tool_name,
-                "arguments": tool_args or {}
+                "arguments": tool_args
             }
         }
 
@@ -559,18 +564,31 @@ class MCPAgentWrapper:
         return tools_intended
 
     def query_with_messages(self, role_conent_map: List[Dict[str, str]],
-                            use_conversation_history: bool = False) -> Tuple[str, List[ToolCall]]:
-        """Check LLM tool intentions without executing tools - for behavioral testing."""
+                            conversation_history: Optional[List[Dict[str, Any]]] = None) -> Tuple[
+                                str, List[ToolCall], List[Dict[str, Any]]]:
+        """Check LLM tool intentions without executing tools - for behavioral testing.
+
+        Args:
+            role_conent_map: List of role-content mappings for the current messages
+            conversation_history: Previous conversation history (optional)
+            answer_mode: If True, the LLM should consume the conversation history containing
+                         to tool call results and return the final answer.
+
+        Returns:
+            Tuple of (response_content, tools_intended, updated_conversation_history)
+        """
+        # Initialize conversation history if not provided
+        if conversation_history is None:
+            conversation_history = []
+
         # Prepare messages
         messages = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
 
-        # Add conversation history if requested
-        if use_conversation_history:
-            messages.extend(self.conversation_history)
+        # Add conversation history
+        messages.extend(conversation_history)
 
-        # Add new messages
         for message in role_conent_map:
             # although there should only be one message
             # for clarity on the order - we iterate not to miss any messages
@@ -592,59 +610,63 @@ class MCPAgentWrapper:
             # the return type is fine but comming from the generic interface
             tools_intended = self._extract_tool_intentions(message["tool_calls"])  # type: ignore[arg-type]
 
-            # If using conversation history, update it with the new exchange
-        if use_conversation_history:
-            # Add the user message(s) to history
-            for msg in role_conent_map:
-                for role, content in msg.items():
-                    self.add_to_conversation(role, content)
+        # Update conversation history with the new exchange
+        updated_history = conversation_history.copy()
 
-            # Add the complete assistant response to history (preserving tool_calls format)
-            assistant_message = {
-                "role": "assistant",
-                "content": final_content
-            }
+        # Add the user message(s) to history
+        for msg in role_conent_map:
+            for role, content in msg.items():
+                updated_history.append({"role": role, "content": content})
 
-            # Add tool calls to the assistant message if any
-            if "tool_calls" in message and message["tool_calls"]:
-                assistant_message["tool_calls"] = message["tool_calls"]
+        # Add the complete assistant response to history (preserving tool_calls format)
+        assistant_message = {
+            "role": "assistant",
+            "content": final_content
+        }
 
-            self.add_message_to_conversation(assistant_message)
+        # Add tool calls to the assistant message if any
+        if "tool_calls" in message and message["tool_calls"]:
+            assistant_message["tool_calls"] = message["tool_calls"]
 
-        return final_content, tools_intended
+        updated_history.append(assistant_message)
+
+        return final_content, tools_intended, updated_history
 
     def execute_tools_with_messages(self, role_conent_map: List[Dict[str, str]],
-                                    use_conversation_history: bool = False) -> Tuple[str, List[ToolCall]]:
+                                    conversation_history: Optional[List[Dict[str, Any]]] = None) -> Tuple[
+                                        str, List[ToolCall], List[Dict[str, Any]]]:
         """Query the LLM with available tools and return response and tools used.
 
         Args:
             role_conent_map: A dictionary of role to content mappings aka prompts.
                              The role can be "system", "user", "assistant" or "tool".
-            use_conversation_history: Whether to include conversation history in the context.
+            conversation_history: Previous conversation history (optional)
+
+        Returns:
+            Tuple of (response_content, tools_called, updated_conversation_history)
         """
 
-        final_content, tools_intended = self.query_with_messages(role_conent_map, use_conversation_history)
+        final_content, tools_intended, updated_history = self.query_with_messages(role_conent_map, conversation_history)
 
         tools_called = self._process_tool_calls(tools_intended)
 
-        return final_content, tools_called
+        # Add tool responses to conversation history in OpenAI format
+        if tools_called and "tool_calls" in updated_history[-1]:
+            # Get the tool_calls from the last assistant message
+            assistant_tool_calls = updated_history[-1]["tool_calls"]
 
-    def reset_conversation(self):
-        """Reset the conversation history."""
-        self.conversation_history = []
+            # Add tool response messages for each tool call
+            for i, tool_call in enumerate(tools_called):
+                tool_call_id = assistant_tool_calls[i]["id"] if i < len(assistant_tool_calls) else f"tool_call_{i}"
+                content = json.dumps(tool_call.output) if not isinstance(tool_call.output, str) else tool_call.output
+                tool_response_msg = {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": content
+                }
+                updated_history.append(tool_response_msg)
 
-    def add_to_conversation(self, role: str, content: str):
-        """Add a message to the conversation history."""
-        self.conversation_history.append({"role": role, "content": content})
+        # we need to call LLM again with tool content to get the final answer
+        final_content, tools_intended, updated_history = self.query_with_messages([], updated_history)
 
-    def add_message_to_conversation(self, message: Dict[str, Any]):
-        """Add a complete message (including tool calls) to conversation history."""
-        self.conversation_history.append(message)
-
-    def get_conversation_history(self) -> List[Dict[str, Any]]:
-        """Get the current conversation history."""
-        return self.conversation_history.copy()
-
-    def set_conversation_history(self, history: List[Dict[str, Any]]):
-        """Set the conversation history."""
-        self.conversation_history = history.copy()
+        return final_content, tools_called, updated_history
