@@ -107,11 +107,11 @@ class TestLLMIntegration:
         messages = [{
             "user": prompt
         }]
-        response, tools_called = test_agent.query_with_messages(messages)
+        response, tools_intended = test_agent.query_with_messages(messages)
 
         verbose_logger.info("Prompt: %s", prompt)
         verbose_logger.info("Response: %s", response)
-        verbose_logger.info("Tools called: %s", [tool.name for tool in tools_called])
+        verbose_logger.info("Tools called: %s", [tool.name for tool in tools_intended])
 
         # first we check if there is a question in the response for the name or UUID of the compose
         contains_question = GEval(
@@ -146,12 +146,12 @@ class TestLLMIntegration:
         test_case = LLMTestCase(
             input=prompt,
             actual_output=response,
-            tools_called=tools_called,
+            tools_called=tools_intended,
             expected_tools=expected_tools
         )
 
         # Check if relevant tools were selected
-        tool_names = [tool.name for tool in tools_called]
+        tool_names = [tool.name for tool in tools_intended]
         expected_tool_names = ["get_composes", "get_compose_details"]
         found_relevant = any(tool in tool_names for tool in expected_tool_names)
 
@@ -241,16 +241,16 @@ class TestLLMIntegration:
         messages = [{
             "user": prompt
         }]
-        response, tools_called = test_agent.query_with_messages(messages)
+        response, tools_intended = test_agent.query_with_messages(messages)
 
         test_case = LLMTestCase(
             input=prompt,
             actual_output=response,
-            tools_called=tools_called
+            tools_called=tools_intended
         )
 
         verbose_logger.info("Conversation prompt for %s: %s", llm_config['name'], prompt)
-        verbose_logger.info("Tools called: %s", [tool.name for tool in tools_called])
+        verbose_logger.info("Tools called: %s", [tool.name for tool in tools_intended])
         verbose_logger.info("Response length: %d characters", len(response))
         verbose_logger.info("Response preview: %s...", response[:200])
 
@@ -289,18 +289,18 @@ class TestLLMIntegration:
         messages = [{
             "user": scenario["prompt"]
         }]
-        response, tools_called = test_agent.query_with_messages(messages)
+        response, tools_intended = test_agent.query_with_messages(messages)
 
         expected_tools = [ToolCall(name=name) for name in scenario["expected_tools"]]
 
         test_case = LLMTestCase(
             input=scenario["prompt"],
             actual_output=response,
-            tools_called=tools_called,
+            tools_called=tools_intended,
             expected_tools=expected_tools
         )
 
-        tool_names = [tool.name for tool in tools_called]
+        tool_names = [tool.name for tool in tools_intended]
         verbose_logger.info("  Model: %s", llm_config['name'])
         verbose_logger.info("  Prompt: %s", scenario['prompt'])
         verbose_logger.info("  Expected: %s", scenario['expected_tools'])
