@@ -314,3 +314,56 @@ class TestLLMIntegration:
 
         verbose_logger.info("✓ Tool usage pattern test passed for %s with prompt: %s",
                             llm_config['name'], scenario['prompt'])
+
+    @pytest.mark.parametrize("llm_config", llm_configurations,
+                             ids=[config['name'] for config in llm_configurations])
+    def test_llm_paging(self, test_agent, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
+        """Test that the LLM can page through results."""
+        # Reset conversation history for this test
+        test_agent.reset_conversation()
+
+        prompt = "List my latest 2 blueprints"
+
+        messages = [{
+            "user": prompt
+        }]
+        response, tools_called = test_agent.execute_tools_with_messages(messages, use_conversation_history=True)
+
+        verbose_logger.info("  Model: %s", llm_config['name'])
+        verbose_logger.info("Prompt: %s", prompt)
+        verbose_logger.info("Response: %s", response)
+
+        expected_tools = [ToolCall(name="get_blueprints")]
+
+        test_case_initial = LLMTestCase(
+            input=prompt,
+            actual_output=response,
+            tools_called=tools_called,
+            expected_tools=expected_tools
+        )
+        tool_correctness = ToolCorrectnessMetric(threshold=0.6)
+
+        assert_test(test_case_initial, [tool_correctness])
+
+        # Now ask for more with conversation context
+        follow_up_prompt = "Can you show me the next 3 blueprints?"
+        messages = [{
+            "user": follow_up_prompt
+        }]
+        response, tools_intended = test_agent.query_with_messages(messages, use_conversation_history=True)
+
+        verbose_logger.info("Follow-up Prompt: %s", follow_up_prompt)
+        verbose_logger.info("Conversation history length: %d", len(test_agent.get_conversation_history()))
+        verbose_logger.info("Full conversation history: %s", test_agent.get_conversation_history())
+
+        expected_tools = [ToolCall(name="get_blueprints", arguments={"limit": 3, "offset": 2})]
+
+        test_case_subsequent = LLMTestCase(
+            input=follow_up_prompt,
+            actual_output=response,
+            tools_called=tools_intended,
+            expected_tools=expected_tools
+        )
+        tool_correctness = ToolCorrectnessMetric(threshold=0.6)
+
+        assert_test(test_case_subsequent, [tool_correctness])

@@ -305,6 +305,8 @@ class MCPAgentWrapper:
         self.session_id: Optional[str] = None
         # Initialize custom LLM for agent interactions
         self.custom_llm = CustomVLLMModel(api_url=api_url, model_id=model_id, api_key=api_key)
+        # Initialize conversation history management
+        self.conversation_history: List[Dict[str, Any]] = []
         self._initialize()
 
     def _initialize(self):
@@ -556,12 +558,19 @@ class MCPAgentWrapper:
 
         return tools_intended
 
-    def query_with_messages(self, role_conent_map: List[Dict[str, str]]) -> Tuple[str, List[ToolCall]]:
+    def query_with_messages(self, role_conent_map: List[Dict[str, str]],
+                            use_conversation_history: bool = False) -> Tuple[str, List[ToolCall]]:
         """Check LLM tool intentions without executing tools - for behavioral testing."""
         # Prepare messages
         messages = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
+
+        # Add conversation history if requested
+        if use_conversation_history:
+            messages.extend(self.conversation_history)
+
+        # Add new messages
         for message in role_conent_map:
             # although there should only be one message
             # for clarity on the order - we iterate not to miss any messages
@@ -583,18 +592,59 @@ class MCPAgentWrapper:
             # the return type is fine but comming from the generic interface
             tools_intended = self._extract_tool_intentions(message["tool_calls"])  # type: ignore[arg-type]
 
+            # If using conversation history, update it with the new exchange
+        if use_conversation_history:
+            # Add the user message(s) to history
+            for msg in role_conent_map:
+                for role, content in msg.items():
+                    self.add_to_conversation(role, content)
+
+            # Add the complete assistant response to history (preserving tool_calls format)
+            assistant_message = {
+                "role": "assistant",
+                "content": final_content
+            }
+
+            # Add tool calls to the assistant message if any
+            if "tool_calls" in message and message["tool_calls"]:
+                assistant_message["tool_calls"] = message["tool_calls"]
+
+            self.add_message_to_conversation(assistant_message)
+
         return final_content, tools_intended
 
-    def execute_tools_with_messages(self, role_conent_map: List[Dict[str, str]]) -> Tuple[str, List[ToolCall]]:
+    def execute_tools_with_messages(self, role_conent_map: List[Dict[str, str]],
+                                    use_conversation_history: bool = False) -> Tuple[str, List[ToolCall]]:
         """Query the LLM with available tools and return response and tools used.
 
         Args:
             role_conent_map: A dictionary of role to content mappings aka prompts.
                              The role can be "system", "user", "assistant" or "tool".
+            use_conversation_history: Whether to include conversation history in the context.
         """
 
-        final_content, tools_intended = self.query_with_messages(role_conent_map)
+        final_content, tools_intended = self.query_with_messages(role_conent_map, use_conversation_history)
 
         tools_called = self._process_tool_calls(tools_intended)
 
         return final_content, tools_called
+
+    def reset_conversation(self):
+        """Reset the conversation history."""
+        self.conversation_history = []
+
+    def add_to_conversation(self, role: str, content: str):
+        """Add a message to the conversation history."""
+        self.conversation_history.append({"role": role, "content": content})
+
+    def add_message_to_conversation(self, message: Dict[str, Any]):
+        """Add a complete message (including tool calls) to conversation history."""
+        self.conversation_history.append(message)
+
+    def get_conversation_history(self) -> List[Dict[str, Any]]:
+        """Get the current conversation history."""
+        return self.conversation_history.copy()
+
+    def set_conversation_history(self, history: List[Dict[str, Any]]):
+        """Set the conversation history."""
+        self.conversation_history = history.copy()
