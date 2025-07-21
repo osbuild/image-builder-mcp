@@ -1,5 +1,6 @@
 """Integration tests for LLM functionality with MCP server using deepeval."""
 
+from typing import Any, Dict, List
 import pytest
 from deepeval import assert_test
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams, ToolCall
@@ -17,7 +18,8 @@ from .test_utils import (
 llm_configurations, _ = load_llm_configurations()
 
 # Test scenarios for tool usage patterns
-TOOL_USAGE_SCENARIOS = [
+# not sure why mypy needs Any here
+TOOL_USAGE_SCENARIOS: List[Dict[str, Any]] = [
     {
         "prompt": "List all my recent builds",
         "expected_tools": ["get_composes"],
@@ -43,13 +45,17 @@ class TestLLMIntegration:
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
     # pylint: disable=redefined-outer-name
-    def test_rhel_image_creation_behavioral_rules(self, test_agent, guardian_agent, llm_config, verbose_logger):
+    def test_rhel_initial_question(self, test_agent, guardian_agent, llm_config, verbose_logger):
         """Test that LLM follows behavioral rules and doesn't immediately call create_blueprint."""
 
         prompt = "Can you create a RHEL 9 image for me?"
 
+        messages = [{
+            "user": prompt
+        }]
+
         # Use lightweight intention-only check instead of actually executing tools
-        response, tools_intended = test_agent.check_tool_intentions(prompt)
+        response, tools_intended = test_agent.query_with_messages(messages)
 
         # Check that create_blueprint is not called immediately
         tool_names = [tool.name for tool in tools_intended]
@@ -98,7 +104,10 @@ class TestLLMIntegration:
 
         prompt = "What is the status of my latest image build?"
 
-        response, tools_called = test_agent.query_with_tools(prompt)
+        messages = [{
+            "user": prompt
+        }]
+        response, tools_called = test_agent.query_with_messages(messages)
 
         verbose_logger.info("Prompt: %s", prompt)
         verbose_logger.info("Response: %s", response)
@@ -229,7 +238,10 @@ class TestLLMIntegration:
 
         prompt = "Can you help me understand what blueprints are available?"
 
-        response, tools_called = test_agent.query_with_tools(prompt)
+        messages = [{
+            "user": prompt
+        }]
+        response, tools_called = test_agent.query_with_messages(messages)
 
         test_case = LLMTestCase(
             input=prompt,
@@ -274,10 +286,10 @@ class TestLLMIntegration:
     def test_tool_usage_patterns(self, test_agent, verbose_logger, llm_config, scenario):  # pylint: disable=redefined-outer-name
         """Test various tool usage patterns and their appropriateness."""
 
-        # Create tool correctness metric - doesn't support model parameter
-        tool_correctness = ToolCorrectnessMetric(threshold=0.6)
-
-        response, tools_called = test_agent.query_with_tools(scenario["prompt"])
+        messages = [{
+            "user": scenario["prompt"]
+        }]
+        response, tools_called = test_agent.query_with_messages(messages)
 
         expected_tools = [ToolCall(name=name) for name in scenario["expected_tools"]]
 
@@ -295,6 +307,8 @@ class TestLLMIntegration:
         verbose_logger.info("  Tools called: %s", tool_names)
         verbose_logger.info("  Response: %s", response)
 
+        # Create tool correctness metric - doesn't support model parameter
+        tool_correctness = ToolCorrectnessMetric(threshold=0.6)
         # Evaluate with deepeval
         assert_test(test_case, [tool_correctness])
 

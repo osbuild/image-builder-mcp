@@ -301,7 +301,7 @@ class MCPAgentWrapper:
         self.server_url = server_url
         self.session: requests.Session = requests.Session()
         self.tools: List[Dict[str, Any]] = []
-        self.system_prompt = "You are a helpful assistant that can use the given tools to help the user."
+        self.system_prompt = ""
         self.session_id: Optional[str] = None
         # Initialize custom LLM for agent interactions
         self.custom_llm = CustomVLLMModel(api_url=api_url, model_id=model_id, api_key=api_key)
@@ -453,7 +453,7 @@ class MCPAgentWrapper:
         if not self.system_prompt and 'instructions' in result:
             self.system_prompt = result.get('instructions', '')
 
-    def call_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+    def call_tool(self, tool_name: str, tool_args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Call a specific tool on the MCP server."""
         tool_request = {
             "jsonrpc": "2.0",
@@ -461,7 +461,7 @@ class MCPAgentWrapper:
             "method": "tools/call",
             "params": {
                 "name": tool_name,
-                "arguments": tool_args
+                "arguments": tool_args or {}
             }
         }
 
@@ -506,16 +506,13 @@ class MCPAgentWrapper:
 
         return response.json()
 
-    def _process_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[ToolCall]:
+    def _process_tool_calls(self, tool_calls_data: List[ToolCall]) -> List[ToolCall]:
         """Process tool calls and return ToolCall objects."""
         tools_called = []
 
         for tool_call in tool_calls_data:
-            tool_name = tool_call["function"]["name"]
-            try:
-                tool_args = json.loads(tool_call["function"]["arguments"])
-            except json.JSONDecodeError:
-                tool_args = {}
+            tool_name = tool_call.name
+            tool_args = tool_call.input_parameters
 
             # Actually call the tool
             try:
@@ -559,64 +556,45 @@ class MCPAgentWrapper:
 
         return tools_intended
 
-    def query_with_tools(self, user_input: str) -> Tuple[str, List[ToolCall]]:
-        """Query the LLM with available tools and return response and tools used."""
-        # Prepare messages
-        messages = []
-        if self.system_prompt:
-            messages.append({"role": "system", "content": self.system_prompt})
-        messages.append({"role": "user", "content": user_input})
-
-        # Call LLM API
-        llm_response = self._call_llm_api(messages)
-        choice = llm_response["choices"][0]
-        message = choice["message"]
-
-        final_content = message.get("content", "")
-        tools_called = []
-
-        # Process tool calls if any
-        if "tool_calls" in message and message["tool_calls"]:
-            tools_called = self._process_tool_calls(message["tool_calls"])
-            # If there's no content but tools were called, provide a meaningful response
-            if not final_content:
-                tool_names = [tool.name for tool in tools_called]
-                final_content = f"I've called the following tools to help answer your question: {', '.join(tool_names)}"
-
-        # Ensure we always have some content for deepeval
-        if not final_content:
-            final_content = "I understand your request, but I cannot provide a specific response at this time."
-
-        return final_content, tools_called
-
-    def check_tool_intentions(self, user_input: str) -> Tuple[str, List[ToolCall]]:
+    def query_with_messages(self, role_conent_map: List[Dict[str, str]]) -> Tuple[str, List[ToolCall]]:
         """Check LLM tool intentions without executing tools - for behavioral testing."""
         # Prepare messages
         messages = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
-        messages.append({"role": "user", "content": user_input})
+        for message in role_conent_map:
+            # although there should only be one message
+            # for clarity on the order - we iterate not to miss any messages
+            for role, content in message.items():
+                messages.append({"role": role, "content": content})
 
         # Call LLM API
         llm_response = self._call_llm_api(messages)
         choice = llm_response["choices"][0]
         message = choice["message"]
 
-        final_content = message.get("content", "")
+        # The LLM call can return None for content
+        # Tool metrics will fail if we return None
+        final_content = message.get("content") or ""
         tools_intended = []
 
         # Extract tool intentions without executing them
         if "tool_calls" in message and message["tool_calls"]:
-            tools_intended = self._extract_tool_intentions(message["tool_calls"])
-            # If there's no content but tools were intended, provide a meaningful response
-            if not final_content:
-                tool_names = [tool.name for tool in tools_intended]
-                final_content = f"I would call the following tools to help answer your question: {
-                    ', '.join(tool_names)}"
-
-        # Ensure we always have some content for deepeval
-        if not final_content:
-            final_content = ("I understand your request, but I cannot determine the appropriate "
-                             "response or tools to use.")
+            # the return type is fine but comming from the generic interface
+            tools_intended = self._extract_tool_intentions(message["tool_calls"])  # type: ignore[arg-type]
 
         return final_content, tools_intended
+
+    def execute_tools_with_messages(self, role_conent_map: List[Dict[str, str]]) -> Tuple[str, List[ToolCall]]:
+        """Query the LLM with available tools and return response and tools used.
+
+        Args:
+            role_conent_map: A dictionary of role to content mappings aka prompts.
+                             The role can be "system", "user", "assistant" or "tool".
+        """
+
+        final_content, tools_intended = self.query_with_messages(role_conent_map)
+
+        tools_called = self._process_tool_calls(tools_intended)
+
+        return final_content, tools_called
