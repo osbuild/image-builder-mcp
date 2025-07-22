@@ -654,8 +654,8 @@ class MCPAgentWrapper:
 
         response = requests.post(f"{self.custom_llm.api_url}/chat/completions",
                                  json=payload, headers=headers, timeout=30)
-        print(f"LLM payload: {payload}")
-        print(f"LLM response: {response.text}")
+        # print(f"LLM payload: {payload}")
+        # print(f"LLM response: {response.text}")
 
         if response.status_code != 200:
             raise MCPError(f"LLM API call failed: {response.status_code} - {response.text}")
@@ -815,8 +815,10 @@ class MCPAgentWrapper:
                 }
                 updated_history.append(tool_response_msg)
 
-        # we need to call LLM again with tool content to get the final answer
-        final_content, tools_intended, updated_history = self.query_with_messages([], updated_history)
+            # we need to call LLM again with tool content to get the final answer
+            final_content, tools_intended, updated_history = self.query_with_messages([], updated_history)
+        else:
+            warnings.warn("No tools called, but this was expected")
 
         return final_content, tools_called, updated_history
 

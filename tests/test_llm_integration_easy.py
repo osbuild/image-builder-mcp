@@ -218,7 +218,9 @@ class TestLLMIntegrationEasy:
 
         verbose_logger.info("Model: %s", llm_config['name'])
         verbose_logger.info("Prompt: %s", prompt)
-        verbose_logger.info("Response: %s", response)
+        verbose_logger.info("Tools called: %s", [tool.name for tool in tools_called])
+        verbose_logger.info("Full conversation history:\n%s",
+                            pretty_print_conversation_history(conversation_history, llm_config['name']))
 
         expected_tools = [ToolCall(name="get_blueprints")]
 
@@ -240,7 +242,6 @@ class TestLLMIntegrationEasy:
         response, tools_intended, updated_history = test_agent.query_with_messages(messages, conversation_history)
 
         verbose_logger.info("Follow-up Prompt: %s", follow_up_prompt)
-        verbose_logger.info("Conversation history length: %d", len(updated_history))
         verbose_logger.info("Full conversation history:\n%s",
                             pretty_print_conversation_history(updated_history, llm_config['name']))
 
