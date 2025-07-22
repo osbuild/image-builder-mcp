@@ -323,7 +323,7 @@ class CustomVLLMModel(DeepEvalBaseLLM):
                 # remove markdown code block markers
                 content = content.replace("```json", "").replace("```", "")
                 ret = schema.model_validate_json(content)
-                print(f"Model {self.model_id} replied for {payload}\ņwith {ret}")
+                # print(f"Model {self.model_id} replied for {payload}\ņwith {ret}")
             except Exception as e:  # pylint: disable=broad-exception-caught
                 error_message = (f"The LLM {self.model_id} was expected to return a valid JSON object "
                                  f"compatible with the schema {schema}. but it returned {content}."
