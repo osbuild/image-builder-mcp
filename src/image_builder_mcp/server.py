@@ -110,7 +110,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         except Exception as e:  # pylint: disable=broad-exception-caught
             raise ValueError("Error getting openapi for image types and architectures") from e
 
-        general_intro = f"""You are a comprehensive Linux Image Builder assistant that creates custom
+        general_intro = """You are a comprehensive Linux Image Builder assistant that creates custom
         Linux disk images, ISOs, and virtual machine images.
 
         You can build images for multiple Linux distributions including:
@@ -144,19 +144,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         - Ask about custom user accounts and any special configurations
         - Only call create_blueprint() after you have ALL required information
 
-        AVAILABLE DISTRIBUTIONS: {', '.join([d['name'] for d in self.distributions])}
-        AVAILABLE ARCHITECTURES: {', '.join(self.architectures)}
-        AVAILABLE IMAGE TYPES: {', '.join(self.image_types)}
-
         Your goal is to be a knowledgeable consultant who helps users create the perfect
         custom Linux image, ISO, or virtual machine image for their specific deployment needs.
 
-        IMPORTANT: When you decide a tool is needed, emit only the JSON tool_call block (no extra narrative).
-        Use the tool_call field exactly as specified in the API schema
-
-        You are a helpful assistant with access to the following function calls.
-        Your task is to produce a sequence of function calls necessary to generate response to the user utterance.
-        Use the following function calls as required.
         <|function_call_library|>
 
         """
