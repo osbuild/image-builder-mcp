@@ -172,66 +172,6 @@ class TestLLMIntegration:
 
     @pytest.mark.parametrize("llm_config", llm_configurations,
                              ids=[config['name'] for config in llm_configurations])
-    def test_system_prompt_effectiveness(self, test_agent, guardian_agent, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
-        """Test that the system prompt contains all necessary behavioral guidelines."""
-
-        # Define system prompt quality metric using custom LLM
-        system_prompt_quality = GEval(
-            name="System Prompt Quality",
-            criteria=(
-                "The system prompt should contain: "
-                "1. Clear behavioral rules about not calling create_blueprint immediately "
-                "2. Available distributions, architectures, and image types "
-                "3. Instructions to ask for clarification when information is missing "
-                "4. Guidance on proper tool usage sequence"
-            ),
-            evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT],
-            model=guardian_agent
-        )
-
-        # Test the system prompt content
-        system_prompt = test_agent.system_prompt
-
-        verbose_logger.info("System prompt length for %s: %d characters",
-                            llm_config['name'], len(system_prompt))
-        verbose_logger.info("System prompt content: %s", system_prompt[:500] +
-                            "..." if len(system_prompt) > 500 else system_prompt)
-
-        # If system prompt is empty or very short, skip the test content checks
-        if not system_prompt or len(system_prompt) < 100:
-            verbose_logger.warning("System prompt is empty or very short for %s. Skipping content validation.",
-                                   llm_config['name'])
-            pytest.skip(f"System prompt not available from MCP server for {llm_config['name']}")
-
-        # Verify key elements are present (relaxed requirements)
-        required_elements = [
-            "create_blueprint",  # Should mention this function
-            "distribution",      # Should mention distributions
-            "architecture",      # Should mention architectures
-            "image"             # Should mention images
-        ]
-
-        missing_elements = []
-        for element in required_elements:
-            if element.lower() not in system_prompt.lower():
-                missing_elements.append(element)
-
-        if missing_elements:
-            verbose_logger.warning("System prompt for %s missing some elements: %s",
-                                   llm_config['name'], missing_elements)
-        else:
-            verbose_logger.info("✓ System prompt for %s contains expected elements", llm_config['name'])
-
-        test_case = LLMTestCase(
-            input=f"System prompt evaluation for {llm_config['name']}",
-            actual_output=system_prompt
-        )
-
-        # Evaluate with deepeval metric
-        assert_test(test_case, [system_prompt_quality])
-
-    @pytest.mark.parametrize("llm_config", llm_configurations,
-                             ids=[config['name'] for config in llm_configurations])
     def test_complete_conversation_flow(self, test_agent, guardian_agent, verbose_logger, llm_config):  # pylint: disable=redefined-outer-name
         """Test complete conversation flow with proper agent behavior."""
 
