@@ -6,9 +6,7 @@ from deepeval import assert_test
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams, ToolCall
 from deepeval.metrics import GEval, ToolCorrectnessMetric
 
-from tests.conftest import verbose_logger
-
-from .test_utils import (
+from .utils import (
     should_skip_llm_matrix_tests,
     load_llm_configurations
 )

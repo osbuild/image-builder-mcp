@@ -4,7 +4,7 @@ Pytest configuration and shared fixtures for image-builder-mcp tests.
 
 import logging
 import pytest
-from .test_utils import (
+from .utils import (
     start_mcp_server_process,
     cleanup_server_process,
     CustomVLLMModel,
