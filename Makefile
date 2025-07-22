@@ -24,7 +24,7 @@ test-coverage: ## Run tests with coverage reporting
 	pytest tests/ -v --cov=. --cov-report=html --cov-report=term-missing
 
 install-test-deps: ## Install test dependencies
-	pip install pytest pytest-cov
+	pip install pytest pytest-cov deepeval
 
 clean-test: ## Clean test artifacts and cache
 	@echo "Cleaning test artifacts..."
