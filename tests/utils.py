@@ -8,6 +8,7 @@ import time
 import asyncio
 import multiprocessing
 from typing import Dict, List, Any, Tuple, Optional
+import warnings
 
 import requests
 from pydantic import BaseModel
@@ -529,13 +530,20 @@ class MCPAgentWrapper:
         if not self.system_prompt and 'instructions' in result:
             self.system_prompt = result.get('instructions', '')
 
-    def cast_tool_args(self, tool_args: Dict[str, Any], tool_name: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Cast tool arguments to match the parameter specifications from MCP tools."""
+    def cast_tool_args(self,
+                       tool_args: Dict[str, Any],
+                       tool_name: str,
+                       tools: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], bool]:
+        """Cast tool arguments to match the parameter specifications from MCP tools.
+
+        Returns:
+            Tuple of (casted_args, any_casted)
+        """
         # Find the tool definition
         tool_def = self._find_tool_definition(tool_name, tools)
 
         if not tool_def:
-            return tool_args
+            return tool_args, False
 
         # Get parameter specifications from the tool
         input_schema = tool_def.get("inputSchema", {})
@@ -544,16 +552,19 @@ class MCPAgentWrapper:
         cast_args = {}
         type_caster = TypeCaster()
 
+        any_casted = False
         for arg_name, arg_value in tool_args.items():
             if arg_name in properties:
                 prop_spec = properties[arg_name]
                 prop_type = prop_spec.get("type")
                 cast_args[arg_name] = self._cast_single_argument(arg_value, prop_type, type_caster)
+                if cast_args[arg_name] != arg_value:
+                    any_casted = True
             else:
                 # Parameter not in schema, keep as is
                 cast_args[arg_name] = arg_value
 
-        return cast_args
+        return cast_args, any_casted
 
     def _find_tool_definition(self, tool_name: str, tools: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Find tool definition by name."""
@@ -615,7 +626,9 @@ class MCPAgentWrapper:
             tools_data = self._get_tools_list()
             tools = self._extract_tools_from_response(tools_data)
             # Cast tool arguments according to parameter specifications
-            tool_args = self.cast_tool_args(tool_args or {}, tool_name, tools)
+            tool_args, any_casted = self.cast_tool_args(tool_args or {}, tool_name, tools)
+            if any_casted:
+                warnings.warn(f"Tool {tool_name} arguments needed to be casted.")
 
         response = self.session.post(self.server_url, json=tool_request, headers=headers, timeout=30)
 
