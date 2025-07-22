@@ -63,6 +63,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         # self.distributions = self.client_noauth.make_request("distributions")
         self.distributions = [
             {'description': 'CentOS Stream 9', 'name': 'centos-9'},
+            {'description': 'CentOS Stream 10', 'name': 'centos-10'},
             {'description': 'Fedora Linux 37', 'name': 'fedora-37'},
             {'description': 'Fedora Linux 38', 'name': 'fedora-38'},
             {'description': 'Fedora Linux 39', 'name': 'fedora-39'},
@@ -74,21 +75,21 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             {'description': 'Red Hat Enterprise Linux (RHEL) 10', 'name': 'rhel-10'},
             {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8.10'},
             {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-84'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-85'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-86'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-87'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-88'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-89'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8.4', 'name': 'rhel-84'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8.5', 'name': 'rhel-85'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8.6', 'name': 'rhel-86'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8.7', 'name': 'rhel-87'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8.8', 'name': 'rhel-88'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 8.9', 'name': 'rhel-89'},
             {'description': 'Red Hat Enterprise Linux (RHEL) 9 beta', 'name': 'rhel-9-beta'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-9.6'},
             {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-9'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-90'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-91'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-92'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-93'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-94'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-95'}
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9.0', 'name': 'rhel-90'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9.1', 'name': 'rhel-91'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9.2', 'name': 'rhel-92'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9.3', 'name': 'rhel-93'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9.4', 'name': 'rhel-94'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9.5', 'name': 'rhel-95'},
+            {'description': 'Red Hat Enterprise Linux (RHEL) 9.6', 'name': 'rhel-9.6'},
         ]
 
         try:
