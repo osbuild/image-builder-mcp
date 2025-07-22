@@ -108,11 +108,13 @@ class TestLLMIntegrationEasy:
         messages = [{
             "user": prompt
         }]
-        response, tools_intended, _ = test_agent.query_with_messages(messages)
+        response, tools_intended, conversation_history = test_agent.query_with_messages(messages)
 
         verbose_logger.info("Prompt: %s", prompt)
         verbose_logger.info("Response: %s", response)
         verbose_logger.info("Tools called: %s", [tool.name for tool in tools_intended])
+        verbose_logger.info("Full conversation history:\n%s",
+                            pretty_print_conversation_history(conversation_history, llm_config['name']))
 
         # first we check if there is a question in the response for the name or UUID of the compose
         contains_question = GEval(
