@@ -806,3 +806,13 @@ class MCPAgentWrapper:
         final_content, tools_intended, updated_history = self.query_with_messages([], updated_history)
 
         return final_content, tools_called, updated_history
+
+
+def pretty_print_conversation_history(conversation_history: List[Dict[str, Any]], llm_config: str) -> str:
+    """Pretty print the conversation history."""
+    ret = ""
+    for message in conversation_history:
+        ret += f"-------- {llm_config}: {message['role']} --------\n"
+        ret += f"{message}\n"
+        ret += f"{message['content']}\n\n"
+    return ret

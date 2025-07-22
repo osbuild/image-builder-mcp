@@ -8,7 +8,8 @@ from deepeval.metrics import GEval, ToolCorrectnessMetric
 
 from .utils import (
     should_skip_llm_matrix_tests,
-    load_llm_configurations
+    load_llm_configurations,
+    pretty_print_conversation_history
 )
 
 
@@ -252,20 +253,22 @@ class TestLLMIntegration:
 
         verbose_logger.info("Conversation prompt for %s: %s", llm_config['name'], prompt)
         verbose_logger.info("Tools called: %s", [tool.name for tool in tools_intended])
-        verbose_logger.info("Full conversation history:\n%s", "\n".join(list(map(str, conversation_history))))
+        verbose_logger.info("Full conversation history:\n%s", pretty_print_conversation_history(
+            conversation_history, llm_config['name']))
 
         # Define conversation flow metric using custom LLM
         conversation_quality = GEval(
             name="Conversation Flow Quality",
             criteria=(
-                "The conversation should demonstrate proper agent behavior: "
-                "1. Understanding user intent "
-                "2. Using appropriate tools to gather information "
-                "3. Providing helpful and informative responses "
-                "4. Following system guidelines"
+                "The conversation should demonstrate proper agent behavior:\n"
+                "1. Understanding user intent\n"
+                "2. Using appropriate tools to gather information or providing helpful and informative responses\n"
+                "3. The 'content' of the conversation contains only json then this is considered a failure\n"
+                "4. Take care that tool calls are properly part of a \"tool_call\" object\n"
             ),
             evaluation_params=[LLMTestCaseParams.INPUT,
-                               LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.TOOLS_CALLED],
+                               LLMTestCaseParams.ACTUAL_OUTPUT,
+                               LLMTestCaseParams.TOOLS_CALLED],
             model=guardian_agent
         )
 
@@ -347,7 +350,8 @@ class TestLLMIntegration:
 
         verbose_logger.info("Follow-up Prompt: %s", follow_up_prompt)
         verbose_logger.info("Conversation history length: %d", len(updated_history))
-        verbose_logger.info("Full conversation history:\n%s", "\n".join(list(map(str, updated_history))))
+        verbose_logger.info("Full conversation history:\n%s",
+                            pretty_print_conversation_history(updated_history, llm_config['name']))
 
         expected_tools = [ToolCall(name="get_blueprints", arguments={"limit": 3, "offset": 2})]
 
