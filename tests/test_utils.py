@@ -635,7 +635,7 @@ class MCPAgentWrapper:
     def execute_tools_with_messages(self, role_conent_map: List[Dict[str, str]],
                                     conversation_history: Optional[List[Dict[str, Any]]] = None) -> Tuple[
                                         str, List[ToolCall], List[Dict[str, Any]]]:
-        """Query the LLM with available tools and return response and tools used.
+        """Query the LLM with available tools, execute them and return the final answer.
 
         Args:
             role_conent_map: A dictionary of role to content mappings aka prompts.

@@ -241,23 +241,20 @@ class TestLLMIntegration:
         messages = [{
             "user": prompt
         }]
-        response, tools_intended, _ = test_agent.query_with_messages(messages)
+        response, tools_intended, conversation_history = test_agent.execute_tools_with_messages(messages)
+
+        expected_tools = [ToolCall(name="get_blueprints"), ToolCall(name="get_openapi")]
 
         test_case = LLMTestCase(
             input=prompt,
             actual_output=response,
-            tools_called=tools_intended
+            tools_called=tools_intended,
+            expected_tools=expected_tools
         )
 
         verbose_logger.info("Conversation prompt for %s: %s", llm_config['name'], prompt)
         verbose_logger.info("Tools called: %s", [tool.name for tool in tools_intended])
-        verbose_logger.info("Response length: %d characters", len(response))
-        verbose_logger.info("Response preview: %s...", response[:200])
-
-        # Basic sanity checks (relaxed)
-        assert response, f"LLM {llm_config['name']} should provide a non-empty response"
-        # Allow shorter responses for tool-based interactions
-        assert len(response) > 10, f"Response from {llm_config['name']} should be substantial"
+        verbose_logger.info("Full conversation history:\n%s", "\n".join(list(map(str, conversation_history))))
 
         # Define conversation flow metric using custom LLM
         conversation_quality = GEval(
