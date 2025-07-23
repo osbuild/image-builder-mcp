@@ -131,11 +131,23 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
 
         🚨 CRITICAL BEHAVIORAL RULES:
 
-        1. **NEVER CALL create_blueprint() IMMEDIATELY** when a user asks to create an image
-        2. **ALWAYS GATHER COMPLETE INFORMATION FIRST** through a conversational approach
-        3. **ASK SPECIFIC QUESTIONS** to collect all required details before making any API calls
-        4. **BE HELPFUL AND CONSULTATIVE** - guide users through the image creation process
-        5. **When you need to call a tool, you MUST use the tool_calls format, NOT plain text.**
+        🟢 **CALL IMMEDIATELY** (tools marked with green indicator):
+        - get_openapi, get_blueprints, get_blueprint_details, get_composes, get_compose_details
+        - For queries like: "List my blueprints", "What's my build status?", "Show blueprint details"
+
+        🔴 **GATHER INFORMATION FIRST** (tools marked with red indicator):
+        - create_blueprint: Ask for name, distribution, architecture, image type, users, etc.
+
+        🟡 **VERIFY PARAMETERS** (tools marked with yellow indicator):
+        - blueprint_compose: Confirm blueprint UUID before proceeding
+
+        **Note**: Each tool description includes color-coded behavioral indicators for MCP clients that ignore server instructions.
+
+        RULES FOR CREATION TOOLS:
+        1. **ALWAYS GATHER COMPLETE INFORMATION FIRST** through a conversational approach
+        2. **ASK SPECIFIC QUESTIONS** to collect all required details before making creation API calls
+        3. **BE HELPFUL AND CONSULTATIVE** - guide users through the creation process
+        4. **When you need to call a tool, you MUST use the tool_calls format, NOT plain text.**
 
         WHEN A USER ASKS TO CREATE AN IMAGE OR ISO:
         - Start by asking about their specific needs and use case
@@ -144,8 +156,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         - Ask about custom user accounts and any special configurations
         - Only call create_blueprint() after you have ALL required information
 
-        Your goal is to be a knowledgeable consultant who helps users create the perfect
-        custom Linux image, ISO, or virtual machine image for their specific deployment needs.
+        Your goal is to be a knowledgeable consultant who helps users both access existing information
+        immediately and create the perfect custom Linux image, ISO, or virtual machine image for their
+        specific deployment needs.
 
         <|function_call_library|>
 
@@ -343,7 +356,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return f"Error: {str(e)} for compose {json.dumps(data)}"
 
     def blueprint_compose(self, blueprint_uuid: str) -> str:
-        """Compose an image from a blueprint UUID created with create_blueprint, get_blueprints.
+        """🟡 VERIFY PARAMETERS - Confirm blueprint UUID before proceeding.
+
+        Compose an image from a blueprint UUID created with create_blueprint, get_blueprints.
         If the UUID is not clear, ask the user whether to create a new blueprint with create_blueprint
         or use an existing blueprint from get_blueprints.
 
@@ -387,7 +402,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         return response_str
 
     def get_openapi(self, response_size: int) -> str:
-        """Get OpenAPI spec. Use this to get details e.g for a new blueprint
+        """🟢 CALL IMMEDIATELY - No information gathering required.
+
+        Get OpenAPI spec. Use this to get details e.g for a new blueprint
 
         Args:
             response_size: number of items returned (use 7 as default)
@@ -408,7 +425,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return f"Error: {str(e)}"
 
     def create_blueprint(self, data: dict) -> str:
-        """Create a custom Linux image blueprint.
+        """🔴 GATHER INFORMATION FIRST - Do not call immediately.
+
+        Create a custom Linux image blueprint.
 
         ⚠️ CRITICAL: Only call this function after you have gathered ALL required information from the user.
 
@@ -466,7 +485,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         return f"https://{client.domain}/insights/image-builder/imagewizard/{blueprint_id}"
 
     def get_blueprints(self, limit: int = 7, offset: int = 0, search_string: str | None = None) -> str:
-        """EXECUTE: Show user's image blueprints (saved image templates/configurations for
+        """🟢 CALL IMMEDIATELY - No information gathering required.
+
+        EXECUTE: Show user's image blueprints (saved image templates/configurations for
         Linux distributions, packages, users).
 
         Args:
@@ -526,7 +547,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return f"Error: {str(e)}"
 
     def get_blueprint_details(self, blueprint_identifier: str) -> str:
-        """Get blueprint details.
+        """🟢 CALL IMMEDIATELY - No information gathering required.
+
+        Get blueprint details.
 
         Args:
             blueprint_identifier: the UUID, name or reply_id to query
@@ -586,7 +609,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
 
     # NOTE: the _doc_ has escaped curly braces as __doc__.format() is called on the docstring
     def get_composes(self, limit: int = 7, offset: int = 0, search_string: str | None = None) -> str:
-        """Get a list of all image builds (composes) with their UUIDs and basic status.
+        """🟢 CALL IMMEDIATELY - No information gathering required.
+
+        Get a list of all image builds (composes) with their UUIDs and basic status.
 
         **ALWAYS USE THIS FIRST** when checking image build status or finding builds.
         This returns the UUID needed for get_compose_details.
@@ -658,7 +683,9 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return f"Error: {str(e)}"
 
     def get_compose_details(self, compose_identifier: str) -> str:
-        """Get detailed information about a specific image build.
+        """🟢 CALL IMMEDIATELY - No information gathering required.
+
+        Get detailed information about a specific image build.
 
         ⚠️ REQUIRES: You MUST have the compose UUID from get_composes() first.
         ⚠️ NEVER call this with generic terms like "latest", "recent", or "my build"
