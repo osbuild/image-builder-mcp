@@ -32,8 +32,8 @@ def test_tool_parameter_casting(test_agent, verbose_logger):
     verbose_logger.debug(f"Cast args: {cast_args}")
 
     # Verify that response_size was cast to integer
-    assert isinstance(cast_args['response_size'], int), f"response_size should be int, got {
-        type(cast_args['response_size'])}"
+    assert isinstance(cast_args['response_size'], int), (f"response_size should be int, "
+                                                         "got {type(cast_args['response_size'])}")
     assert cast_args['response_size'] == 7, f"response_size should be 7, got {cast_args['response_size']}"
 
     print("✓ Parameter casting test passed - string '7' was successfully cast to integer 7")
