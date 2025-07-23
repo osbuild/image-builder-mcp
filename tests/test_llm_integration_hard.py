@@ -10,8 +10,8 @@ from deepeval.metrics import GEval
 from .utils import (
     should_skip_llm_matrix_tests,
     load_llm_configurations,
-    pretty_print_conversation_history
 )
+from .utils_llama_index import pretty_print_chat_history
 
 
 # Load LLM configurations for parametrization
@@ -30,10 +30,7 @@ class TestLLMIntegrationHard:
 
         prompt = "Can you help me understand what blueprints are available?"
 
-        messages = [{
-            "user": prompt
-        }]
-        response, tools_intended, conversation_history = test_agent.execute_tools_with_messages(messages)
+        response, tools_intended, conversation_history = test_agent.execute_tools_with_messages(prompt)
 
         expected_tools = [ToolCall(name="get_blueprints"), ToolCall(name="get_openapi")]
 
@@ -42,8 +39,8 @@ class TestLLMIntegrationHard:
 
         verbose_logger.info("Conversation prompt for %s: %s", llm_config['name'], prompt)
         verbose_logger.info("Tools called: %s", [tool.name for tool in tools_intended])
-        verbose_logger.info("Full conversation history:\n%s", pretty_print_conversation_history(
-            conversation_history, llm_config['name']))
+        verbose_logger.info("Full conversation history:\n%s",
+                            pretty_print_chat_history(conversation_history, llm_config['name']))
 
         # Define conversation flow metric using custom LLM
         conversation_quality = GEval(

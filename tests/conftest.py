@@ -7,9 +7,11 @@ import pytest
 from .utils import (
     start_mcp_server_process,
     cleanup_server_process,
-    CustomVLLMModel,
-    MCPAgentWrapper,
     load_llm_configurations
+)
+from .utils_llama_index import (
+    CustomVLLMModel,
+    MCPAgentWrapper
 )
 
 

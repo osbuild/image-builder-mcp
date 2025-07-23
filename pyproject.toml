@@ -36,6 +36,9 @@ dev = [
     "pylint",
     "autopep8",
     "deepeval",
+    "llama-index-core",
+    "llama-index-tools-mcp",
+    "llama-index-llms-openai",
 ]
 
 [project.scripts]

@@ -11,8 +11,8 @@ from deepeval.metrics import GEval, ToolCorrectnessMetric
 from .utils import (
     should_skip_llm_matrix_tests,
     load_llm_configurations,
-    pretty_print_conversation_history
 )
+from .utils_llama_index import pretty_print_chat_history
 
 
 # Load LLM configurations for parametrization
@@ -51,12 +51,8 @@ class TestLLMIntegrationEasy:
 
         prompt = "Can you create a RHEL 9 image for me?"
 
-        messages = [{
-            "user": prompt
-        }]
-
         # Use lightweight intention-only check instead of actually executing tools
-        response, tools_intended, _ = test_agent.query_with_messages(messages)
+        response, tools_intended, _ = test_agent.query_with_messages(prompt)
 
         # Check that create_blueprint is not called immediately
         tool_names = [tool.name for tool in tools_intended]
@@ -105,16 +101,13 @@ class TestLLMIntegrationEasy:
 
         prompt = "What is the status of my latest image build?"
 
-        messages = [{
-            "user": prompt
-        }]
-        response, tools_intended, conversation_history = test_agent.query_with_messages(messages)
+        response, tools_intended, conversation_history = test_agent.query_with_messages(prompt)
 
         verbose_logger.info("Prompt: %s", prompt)
         verbose_logger.info("Response: %s", response)
         verbose_logger.info("Tools called: %s", [tool.name for tool in tools_intended])
         verbose_logger.info("Full conversation history:\n%s",
-                            pretty_print_conversation_history(conversation_history, llm_config['name']))
+                            pretty_print_chat_history(conversation_history, llm_config['name']))
 
         # first we check if there is a question in the response for the name or UUID of the compose
         contains_question = GEval(
@@ -177,10 +170,7 @@ class TestLLMIntegrationEasy:
     def test_tool_usage_patterns(self, test_agent, verbose_logger, llm_config, scenario):  # pylint: disable=redefined-outer-name
         """Test various tool usage patterns and their appropriateness."""
 
-        messages = [{
-            "user": scenario["prompt"]
-        }]
-        response, tools_intended, _ = test_agent.query_with_messages(messages)
+        response, tools_intended, _ = test_agent.query_with_messages(scenario["prompt"])
 
         expected_tools = [ToolCall(name=name) for name in scenario["expected_tools"]]
 
@@ -213,16 +203,13 @@ class TestLLMIntegrationEasy:
 
         prompt = "List my latest 2 blueprints"
 
-        messages = [{
-            "user": prompt
-        }]
-        response, tools_called, conversation_history = test_agent.execute_tools_with_messages(messages)
+        response, tools_called, conversation_history = test_agent.execute_tools_with_messages(prompt)
 
         verbose_logger.info("Model: %s", llm_config['name'])
         verbose_logger.info("Prompt: %s", prompt)
         verbose_logger.info("Tools called: %s", [tool.name for tool in tools_called])
         verbose_logger.info("Full conversation history:\n%s",
-                            pretty_print_conversation_history(conversation_history, llm_config['name']))
+                            pretty_print_chat_history(conversation_history, llm_config['name']))
 
         expected_tools = [ToolCall(name="get_blueprints")]
 
@@ -238,14 +225,18 @@ class TestLLMIntegrationEasy:
 
         # Now ask for more with conversation context
         follow_up_prompt = "Can you show me the next 3 blueprints?"
-        messages = [{
-            "user": follow_up_prompt
-        }]
-        response, tools_intended, updated_history = test_agent.query_with_messages(messages, conversation_history)
+
+        # Convert conversation_history to ChatMessage for the new interface
+        chat_history = test_agent.conversation_history_to_chat_messages(conversation_history)
+        response, tools_intended, updated_chat_history = test_agent.query_with_chat_messages(
+            follow_up_prompt, chat_history=chat_history
+        )
 
         verbose_logger.info("Follow-up Prompt: %s", follow_up_prompt)
+        # Convert back to dict format for pretty printing
+        updated_history = [{"role": msg.role, "content": msg.content} for msg in updated_chat_history]
         verbose_logger.info("Full conversation history:\n%s",
-                            pretty_print_conversation_history(updated_history, llm_config['name']))
+                            pretty_print_chat_history(updated_history, llm_config['name']))
 
         expected_tools = [ToolCall(name="get_blueprints", arguments={"limit": 3, "offset": 2})]
 
