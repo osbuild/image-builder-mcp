@@ -310,7 +310,7 @@ class CustomVLLMModel(DeepEvalBaseLLM):
 class CustomLlamaIndexLLM(OpenAI):
     """Custom LlamaIndex LLM that wraps vLLM with OpenAI-compatible API."""
 
-    def __init__(self, api_url: str, model_id: str, api_key: str, **kwargs):
+    def __init__(self, api_url: str, model_id: str, api_key: str, system_prompt: str = "", **kwargs):
         # Configure OpenAI client to use custom endpoint
         super().__init__(
             model=model_id,
@@ -320,6 +320,7 @@ class CustomLlamaIndexLLM(OpenAI):
             **kwargs
         )
         self._custom_model_id = model_id
+        self._system_prompt = system_prompt
 
     @property
     def metadata(self):
@@ -332,7 +333,6 @@ class CustomLlamaIndexLLM(OpenAI):
             is_function_calling_model=True,  # Mark as function calling capable
             model_name=self._custom_model_id,
         )
-
 
 class MCPAgentWrapper:
     """Wrapper for MCP agent functionality using LlamaIndex."""
@@ -359,6 +359,15 @@ class MCPAgentWrapper:
     async def _initialize(self):
         """Initialize MCP session and get available tools."""
         await self._init_mcp_tools()
+
+        # Re-initialize LlamaIndex LLM with the system prompt
+        self.llama_llm = CustomLlamaIndexLLM(
+            api_url=self.api_url,
+            model_id=self.model_id,
+            api_key=self.api_key,
+            system_prompt=self.system_prompt
+        )
+
         await self._setup_agent()
 
     async def _init_mcp_tools(self):
@@ -426,7 +435,6 @@ class MCPAgentWrapper:
             description="Agent with MCP tools",
             llm=self.llama_llm,
             tools=self.tools,
-            system_prompt=self.system_prompt if self.system_prompt else None,
         )
         self.context = Context(self.agent)
 
