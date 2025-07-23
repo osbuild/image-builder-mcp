@@ -8,12 +8,15 @@ import time
 import asyncio
 import multiprocessing
 from typing import Dict, List, Any, Tuple, Optional
-import warnings
 
 import requests
-from pydantic import BaseModel
-from deepeval.models.base_model import DeepEvalBaseLLM
-from deepeval.test_case import ToolCall
+
+
+# Constants
+DEFAULT_JSON_HEADERS = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream'
+}
 
 
 def should_skip_llm_tests() -> bool:
@@ -100,6 +103,10 @@ class ServerConnectionError(Exception):
     """Exception raised when unable to connect to MCP server."""
 
 
+class MCPError(Exception):
+    """Exception raised for MCP-related errors."""
+
+
 def get_free_port() -> int:
     """Find a free port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -181,18 +188,16 @@ def start_mcp_server_process():
         for attempt in range(max_retries):
             try:
                 test_request = create_mcp_init_request()
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json, text/event-stream'
-                }
-                response = requests.post(server_url, json=test_request, headers=headers, timeout=10)
+                response = requests.post(server_url, json=test_request, headers=DEFAULT_JSON_HEADERS, timeout=10)
 
                 if response.status_code == 200:
                     break
 
                 if attempt == max_retries - 1:
-                    raise ServerConnectionError(f"Server not responding properly after {max_retries}"
-                                                f"attempts: {response.status_code} - {response.text}")
+                    raise ServerConnectionError(
+                        (f"Server not responding properly after {max_retries} "
+                         f"attempts: {response.status_code} - {response.text}")
+                    )
 
                 time.sleep(2)  # Wait before retry
 
@@ -208,55 +213,204 @@ def start_mcp_server_process():
         raise e
 
 
-class TypeCaster:
-    """Helper class for casting tool arguments to proper types."""
+def parse_mcp_response(response_text: str) -> Dict[str, Any]:
+    """Parse MCP response which could be JSON or SSE format."""
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        # Try parsing as SSE format
+        for line in response_text.split('\n'):
+            if line.startswith('data: '):
+                data_part = line[6:]  # Remove 'data: ' prefix
+                try:
+                    return json.loads(data_part)
+                except json.JSONDecodeError:
+                    continue
+        raise ValueError(f"No valid JSON found in response: {response_text}") from exc
 
-    @staticmethod
-    def cast_integer(value: Any) -> Any:
-        """Cast value to integer if possible."""
+
+def get_system_prompt_from_server(server_url: str) -> str:
+    """Get system prompt from MCP server."""
+    try:
+        # Initialize with server
+        init_request = create_mcp_init_request()
+        response = requests.post(server_url, json=init_request, headers=DEFAULT_JSON_HEADERS, timeout=10)
+
+        if response.status_code == 200:
+            # Parse response to get instructions
+            response_data = parse_mcp_response(response.text)
+            if isinstance(response_data, dict) and 'result' in response_data:
+                result = response_data['result']
+                return result.get('instructions', '')
+        return ""
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.warning("Failed to get system prompt: %s", e)
+        return ""
+
+
+def make_llm_api_request(api_url: str, api_key: str, payload: Dict[str, Any]) -> str:
+    """Make HTTP request to LLM API and return response content."""
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}'
+    }
+
+    try:
+        response = requests.post(
+            f"{api_url}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=60
+        )
+        response.raise_for_status()
+
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
+
+    except requests.exceptions.RequestException as e:
+        raise MCPError(f"LLM query failed: {e}") from e
+    except (KeyError, IndexError) as e:
+        raise MCPError(f"Unexpected LLM response format: {e}") from e
+
+
+def call_llm_api(api_url: str, model_id: str, api_key: str, messages: List[Dict[str, str]],
+                 temperature: float = 0.1) -> str:
+    """Call LLM API with messages and return response content."""
+    payload = {
+        "model": model_id,
+        "messages": messages,
+        "temperature": temperature,
+    }
+
+    return make_llm_api_request(api_url, api_key, payload)
+
+
+class AgentWrapper:
+    """Wrapper for agent functionality using raw HTTP requests."""
+
+    def __init__(self, server_url: str, api_url: str, model_id: str, api_key: str):
+        self.server_url = server_url
+        self.api_url = api_url
+        self.model_id = model_id
+        self.api_key = api_key
+        self.tools: List[Dict[str, Any]] = []
+        self.system_prompt = ""
+        self._get_server_info()
+
+    def _get_server_info(self):
+        """Get tools and system prompt from MCP server."""
         try:
-            return int(value)
-        except (ValueError, TypeError):
-            return value
+            # Get system prompt using shared function
+            self.system_prompt = get_system_prompt_from_server(self.server_url)
 
-    @staticmethod
-    def cast_number(value: Any) -> Any:
-        """Cast value to float if possible."""
+            # Get available tools
+            tools_request = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list"
+            }
+            response = requests.post(self.server_url, json=tools_request, headers=DEFAULT_JSON_HEADERS, timeout=10)
+            if response.status_code == 200:
+                response_data = parse_mcp_response(response.text)
+                if isinstance(response_data, dict) and 'result' in response_data:
+                    self.tools = response_data['result'].get('tools', [])
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.warning("Failed to get server info: %s", e)
+
+    def _parse_response(self, response_text: str) -> Dict[str, Any]:
+        """Parse MCP response which could be JSON or SSE format."""
+        return parse_mcp_response(response_text)
+
+    def cast_tool_args(self, tool_args: Dict[str, Any], tool_name: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Cast tool arguments according to their schema specifications."""
+        # Find the tool schema
+        tool_schema = None
+        for tool in tools:
+            if tool['name'] == tool_name:
+                tool_schema = tool.get('inputSchema', {})
+                break
+
+        if not tool_schema:
+            return tool_args
+
+        # Cast arguments according to schema
+        casted_args = {}
+        properties = tool_schema.get('properties', {})
+
+        for arg_name, arg_value in tool_args.items():
+            if arg_name in properties:
+                prop_type = properties[arg_name].get('type', 'string')
+                casted_args[arg_name] = self._cast_by_type(arg_value, prop_type)
+            else:
+                casted_args[arg_name] = arg_value
+
+        return casted_args
+
+    def _cast_by_type(self, arg_value: Any, prop_type: str) -> Any:
+        """Cast a value to the specified type."""
         try:
-            return float(value)
+            if prop_type == 'integer':
+                return int(float(arg_value))  # Handle string numbers like "5.0"
+            if prop_type == 'number':
+                return float(arg_value)
+            if prop_type == 'boolean':
+                if isinstance(arg_value, bool):
+                    return arg_value
+                return str(arg_value).lower() in ('true', '1', 'yes', 'on')
+            return str(arg_value)
         except (ValueError, TypeError):
-            return value
+            # If casting fails, keep original value
+            return arg_value
 
-    @staticmethod
-    def cast_boolean(value: Any) -> Any:
-        """Cast value to boolean."""
-        if isinstance(value, str):
-            return value.lower() in ("true", "1", "yes", "on")
-        return bool(value)
+    def call_tool(self, tool_name: str, tool_args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Call a specific tool on the MCP server."""
+        request_data = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": tool_args if tool_args else {}
+            }
+        }
 
-    @staticmethod
-    def cast_string(value: Any) -> Any:
-        """Cast value to string, handling null values."""
-        if value is None or value == "null":
-            return None
-        return str(value)
+        try:
+            response = requests.post(self.server_url, json=request_data, headers=DEFAULT_JSON_HEADERS, timeout=30)
+            response.raise_for_status()
 
-    @staticmethod
-    def cast_object(value: Any) -> Any:
-        """Cast value to object/dict."""
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                return value
-        return value
+            response_data = parse_mcp_response(response.text)
+            if isinstance(response_data, dict) and 'result' in response_data:
+                return response_data['result']
+            if isinstance(response_data, dict) and 'error' in response_data:
+                raise MCPError(f"Tool call error: {response_data['error']}")
+            raise MCPError(f"Unexpected response format: {response_data}")
 
-    @staticmethod
-    def cast_array(value: Any) -> Any:
-        """Cast value to array/list."""
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                return value
-        return value
+        except requests.exceptions.RequestException as e:
+            raise MCPError(f"HTTP request failed: {e}") from e
+        except Exception as e:
+            raise MCPError(f"Tool call failed: {e}") from e
+
+    def query_llm(self, user_msg: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> str:
+        """Query the LLM with a message and optional conversation history."""
+        # Build messages from conversation history and current message
+        messages = []
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+
+        if conversation_history:
+            messages.extend(conversation_history)
+
+        messages.append({"role": "user", "content": user_msg})
+
+        # Use shared LLM API function
+        return call_llm_api(self.api_url, self.model_id, self.api_key, messages)
+
+
+def pretty_print_conversation_history(conversation_history: List[Dict[str, Any]], llm_config: str) -> str:
+    """Pretty print conversation history."""
+    ret = ""
+    for idx, message in enumerate(conversation_history):
+        ret += f"-------- {llm_config}: Message {idx} ({message.get('role', 'unknown')}) --------\n"
+        ret += f"Content: {message.get('content', '')}\n\n"
+    return ret

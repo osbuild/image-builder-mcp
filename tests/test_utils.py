@@ -1,22 +1,16 @@
-"""Test the utils of the tests."""
+"""Test utility functions for argument casting and MCP server interaction."""
 
 import json
 
-import pytest
+from .utils import load_llm_configurations, MCPError
 
-from .utils_llama_index import MCPError, load_llm_configurations
-
-
-# Load LLM configurations for parametrization
+# Load configurations once at module level
 llm_configurations, _ = load_llm_configurations()
 
 # pylint: disable=redefined-outer-name,too-many-locals
 
 
-@pytest.mark.skipif(len(llm_configurations) == 0, reason="No valid LLM configurations found")
-@pytest.mark.parametrize("llm_config", llm_configurations,
-                         ids=[config['name'] for config in llm_configurations] if llm_configurations else [])
-def test_tool_parameter_casting(test_agent, verbose_logger, llm_config):
+def test_tool_parameter_casting(test_agent, verbose_logger):
     """Test that tool arguments are properly cast according to MCP parameter specifications."""
 
     # Test casting with controlled data
