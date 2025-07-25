@@ -7,16 +7,24 @@ build: ## Build the container image
 lint: ## Run linting with pre-commit
 	pre-commit run --all-files
 
-test: ## Run tests with pytest
+test: ## Run tests with pytest (hides logging output)
 	@echo "Running pytest tests..."
-	pytest tests/ -v
+	env DEEPEVAL_TELEMETRY_OPT_OUT=YES pytest -v
+
+test-verbose: ## Run tests with pytest with verbose output (shows logging output)
+	@echo "Running pytest tests with verbose output..."
+	env DEEPEVAL_TELEMETRY_OPT_OUT=YES pytest -vv -o log_cli=true
+
+test-very-verbose: ## Run tests with pytest showing all intermediate agent steps (shows logging output)
+	@echo "Running pytest tests with debug output..."
+	env DEEPEVAL_TELEMETRY_OPT_OUT=YES pytest -vvv -o log_cli=true
 
 test-coverage: ## Run tests with coverage reporting
 	@echo "Running pytest tests with coverage..."
-	pytest tests/ -v --cov=. --cov-report=html --cov-report=term-missing
+	env DEEPEVAL_TELEMETRY_OPT_OUT=YES pytest -v --cov=. --cov-report=html --cov-report=term-missing
 
 install-test-deps: ## Install test dependencies
-	pip install pytest pytest-cov
+	pip install -e .[dev]
 
 clean-test: ## Clean test artifacts and cache
 	@echo "Cleaning test artifacts..."
