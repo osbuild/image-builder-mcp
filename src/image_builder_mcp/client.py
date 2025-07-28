@@ -112,7 +112,16 @@ class ImageBuilderClient:  # pylint: disable=too-many-instance-attributes
             }
 
         response = requests.request(method, url, headers=headers, json=data, params=params, proxies=proxies, timeout=60)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            # try to append the details to the error
+            try:
+                ret = response.json()
+                raise type(e)(f"{str(e)} - Response: {ret}") from e
+            except json.JSONDecodeError:
+                # ignore the JSONDecodeError and raise the original error
+                raise e from None
         ret = response.json()
         self.logger.debug("Response from %s: %s", url, json.dumps(ret, indent=2))
 
