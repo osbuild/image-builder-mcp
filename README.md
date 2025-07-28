@@ -71,13 +71,15 @@ the following content.
             "id": "image_builder_client_id",
             "type": "promptString",
             "description": "Enter the Image Builder Client ID",
-            "default": ""
+            "default": "",
+            "password": true
         },
         {
             "id": "image_builder_client_secret",
             "type": "promptString",
             "description": "Enter the Image Builder Client Secret",
-            "default": ""
+            "default": "",
+            "password": true
         }
     ],
     "servers": {
