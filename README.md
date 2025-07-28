@@ -126,8 +126,8 @@ To start the integration create a file `~/.cursor/mcp.json` with
             "ghcr.io/osbuild/image-builder-mcp:latest"
         ],
         "env": {
-            "removeprefix_IMAGE_BUILDER_CLIENT_ID": "YOUR_ID here, then remove 'removeprefix_'",
-            "removeprefix_IMAGE_BUILDER_CLIENT_SECRET": "YOUR_SECRET here, then remove 'removeprefix_'"
+            "IMAGE_BUILDER_CLIENT_ID": "",
+            "IMAGE_BUILDER_CLIENT_SECRET": ""
         }
     }
   }
@@ -151,8 +151,8 @@ then integrate:
             "type": "Streamable HTTP",
             "url": "http://localhost:8000/mcp/",
             "headers": {
-                "removeprefix_image-builder-client-id": "YOUR_ID here, then remove 'removeprefix_'",
-                "removeprefix_image-builder-client-secret": "YOUR_SECRET here, then remove 'removeprefix_'"
+                "image-builder-client-id": "",
+                "image-builder-client-secret": ""
             }
         }
     }
