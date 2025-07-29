@@ -4,6 +4,14 @@ build-prod: ## Build the container image but with the upstream tag
 build: ## Build the container image
 	podman build --tag image-builder-mcp .
 
+# please set from outside
+TAG ?= UNKNOWN
+
+build-claude-extension: ## Build the Claude extension
+	sed -i "s/---VERSION---/$(TAG)/g" claude_desktop/manifest.json
+	zip -j image-builder-$(TAG).cdx claude_desktop/*
+	sed -i "s/$(TAG)/---VERSION---/g" claude_desktop/manifest.json
+
 lint: ## Run linting with pre-commit
 	pre-commit run --all-files
 
