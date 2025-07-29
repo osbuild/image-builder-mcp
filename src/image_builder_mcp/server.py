@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
 from typing import Dict, Optional
 
 from fastmcp import FastMCP
@@ -282,65 +281,6 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             "Only describe this, don't expose details about the tool function itself. "
             f"Don't proceed with the request before this is fixed. Error: {str(e)}."
         )
-
-    def compose(self,  # pylint: disable=too-many-arguments
-                distribution: str,
-                architecture: str = "x86_64",
-                image_type: str = "guest-image",
-                image_name: Optional[str] = None,
-                image_description: Optional[str] = None) -> str:
-        """Create a new, up to date, operating system image.
-        Ensure that the data follows the ComposeRequest structure described in the OpenAPI spec.
-        Gather all required details from the user before calling this function.
-
-        Args:
-            distribution: the distribution to use (available: {distributions})
-            architecture: the architecture to use (available: {architectures})
-            image_type: the type of image to create (available: {image_types})
-            image_name: optional name for the image (ask user if they want to set this)
-            image_description: optional description for the image (ask user if they want to set this)
-        """
-        try:
-            client = self.get_client(get_http_headers())
-        except ValueError as e:
-            return self.no_auth_error(e)
-
-        data = {
-            "distribution": distribution,
-            "client_id": self.image_builder_mcp_client_id,
-            "image_requests": [
-                {
-                    "architecture": architecture,
-                    "image_type": image_type,
-                    "upload_request": {
-                        "type": "aws.s3",
-                        "options": {}
-                    }
-                }
-            ]
-            # "customizations": {…}
-        }
-        if image_name:
-            data["image_name"] = image_name
-        else:
-            # Generate a default image name based on distribution and architecture
-            name = f"{distribution}-{architecture}-{image_type}-"
-            name += f"{datetime.now().strftime('%Y%m%d%H%M%S')}-mcp"
-            data["image_name"] = name
-        if image_description:
-            data["image_description"] = image_description
-        else:
-            # Generate a default image description
-            description = "Image created via image-builder-mcp on"
-            description += f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            data["image_description"] = description
-        try:
-            # TBD: programmatically check against openapi
-            response = client.make_request("compose", method="POST", data=data)
-            return f"Compose created successfully: {json.dumps(response)}"
-        # avoid crashing the server so we'll stick to the broad exception catch
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            return f"Error: {str(e)} for compose {json.dumps(data)}"
 
     def blueprint_compose(self, blueprint_uuid: str) -> str:
         """Compose an image from a blueprint UUID created with create_blueprint, get_blueprints.
