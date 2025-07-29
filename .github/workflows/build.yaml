@@ -7,15 +7,24 @@ on:  # yamllint disable-line rule:truthy
   workflow_dispatch:
 
 jobs:
+  generate-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Generate tag
+        id: tag
+        run: |
+          TAG=$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA::8}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
   build-image:
     runs-on: ubuntu-latest
+    needs: generate-tag
 
     permissions:
       packages: write
       contents: read
-
-    outputs:
-      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - name: Checkout repository
@@ -30,22 +39,16 @@ jobs:
         run: |
           podman build --platform=linux/amd64,linux/arm64 --jobs=2 --manifest ib-mcp .
 
-      - name: Generate tag
-        id: tag
-        run: |
-          TAG=$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA::8}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
       - name: Push
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u $ --password-stdin
-          podman manifest push --all --format v2s2 ib-mcp ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}
+          podman manifest push --all --format v2s2 ib-mcp ghcr.io/${{ github.repository }}:${{ needs.generate-tag.outputs.tag }}
           podman manifest push --all --format v2s2 ib-mcp ghcr.io/${{ github.repository }}:latest
 
   build-release-artifacts:
     runs-on: ubuntu-latest
-    needs: build-image
+    needs: generate-tag
     permissions:
       contents: write
     steps:
@@ -54,12 +57,12 @@ jobs:
 
       - name: Build claude extension
         env:
-          TAG: ${{ needs.build-image.outputs.tag }}
+          TAG: ${{ needs.generate-tag.outputs.tag }}
         run: make build-claude-extension
 
       - name: Create release with assets
         env:
-          TAG: ${{ needs.build-image.outputs.tag }}
+          TAG: ${{ needs.generate-tag.outputs.tag }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$TAG" \
