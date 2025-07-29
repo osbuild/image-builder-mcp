@@ -159,6 +159,14 @@ then integrate:
 }
 ```
 
+### Claude Desktop
+
+For Claude Desktop there is an extension file in the release section of the project.
+
+Just download the `image-builder-mcp*.cdx` file and add this in Claude Desktop with
+
+`Settings -> Extensions -> Advanced Extensions Settings -> Install Extension…`
+
 ### Generic STDIO
 
 For generic integration into other tools via STDIO, you should set the environment variables
