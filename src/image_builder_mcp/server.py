@@ -548,6 +548,10 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         - Get any build information → call this first
         Ask the user if they want to get more composes and adapt "offset" accordingly.
 
+        You can also provide this link so the user can check directly in the UI:
+        https://console.redhat.com/insights/image-builder
+
+
         Args:
             limit: maximum number of items to return (default: 7)
             offset: number of items to skip (default: 0)
