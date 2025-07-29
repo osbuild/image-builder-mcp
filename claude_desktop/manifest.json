@@ -13,9 +13,9 @@
   "icon": "icon.png",
   "server": {
     "type": "binary",
-    "entry_point": "podman",
+    "entry_point": "${user_config.CONTAINER_RUNTIME}",
     "mcp_config": {
-      "command": "podman",
+      "command": "${user_config.CONTAINER_RUNTIME}",
       "args": [
             "run",
             "--env",
@@ -47,6 +47,13 @@
       "description": "client secret of a service account of console.redhat.com",
       "required": true,
       "sensitive": true
+    },
+    "CONTAINER_RUNTIME": {
+      "type": "string",
+      "title": "Container runtime (podman, docker, etc.)",
+      "description": "Container runtime to use. Set a FULL PATH to the executable if there are problems on startup.",
+      "required": true,
+      "default": "podman"
     }
   },
   "keywords": [
