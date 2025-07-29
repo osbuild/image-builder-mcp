@@ -667,6 +667,8 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
                 "upload_status", {}).get("options", {}).get("url")
             upload_target = response.get("image_status", {}).get(
                 "upload_status", {}).get("type")
+            image_name = response.get("image_status", {}).get(
+                "upload_status", {}).get("options", {}).get("image_name")
 
             if download_url and upload_target == "oci.objectstorage":
                 intro += """
@@ -680,6 +682,24 @@ To run the image copy the link below and follow the steps below:
 
 ```
 {download_url}
+```
+"""
+            elif image_name and upload_target == "gcp":
+                intro += f"""
+[INSTRUCTION] present the two code blocks with their respective explanations below to the user.
+
+To launch this image, contact your org admin to adjust your launch permissions.
+
+Alternatively, launch directly from the cloud provider console.
+
+Launch with Google Cloud Console:
+```
+gcloud compute instances create {image_name}-instance --image-project red-hat-image-builder --image {image_name}
+```
+
+or copy image to your account
+```
+gcloud compute images create {image_name}-copy --source-image-project red-hat-image-builder --source-image {image_name}
 ```
 """
             elif download_url:
