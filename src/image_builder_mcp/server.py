@@ -372,7 +372,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
 
         YOUR PROCESS AS THE AI ASSISTANT:
         1. If you haven't already, call get_openapi to understand the CreateBlueprintRequest structure
-        2. call get_blueprints and get_blueprint_details to guess the organization for registration
+        2. only for registration, call get_blueprints and get_blueprint_details to guess the "organization" value
         3. Ask the user for ALL the required information listed above through conversation
         4. Only after collecting all information, call this function with properly formatted data
 
