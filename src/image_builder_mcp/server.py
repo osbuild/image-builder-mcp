@@ -18,6 +18,9 @@ from .oauth import Middleware
 
 from .client import ImageBuilderClient
 
+WATERMARK_CREATED = "Blueprint created via image-builder-mcp"
+WATERMARK_UPDATED = "Blueprint updated via image-builder-mcp"
+
 
 class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
     """MCP server for Red Hat Image Builder integration.
@@ -159,6 +162,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         # and register with "self.tool()"
         tool_functions = [self.get_openapi,
                           self.create_blueprint,
+                          self.update_blueprint,
                           self.get_blueprints,
                           self.get_blueprint_details,
                           self.get_composes,
@@ -387,7 +391,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             return self.no_auth_error(e)
         try:
             if os.environ.get("IMAGE_BUILDER_MCP_DISABLE_DESCRIPTION_WATERMARK", "").lower() != "true":
-                desc_parts = [data.get("description", ""), "Blueprint created via image-builder-mcp"]
+                desc_parts = [data.get("description", ""), WATERMARK_CREATED]
                 data["description"] = "\n".join(filter(None, desc_parts))
             # TBD: programmatically check against openapi
             response = client.make_request(
@@ -406,6 +410,35 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         response_str += f"[ANSWER] Blueprint created successfully: {{'UUID': '{response['id']}'}}\n"
         response_str += "We could double check the details or start the build/compose"
         return response_str
+
+    def update_blueprint(self, blueprint_uuid: str, data: dict) -> str:
+        """Update a blueprint.
+
+        🟡 VERIFY PARAMETERS - Get original blueprint details and UUID before proceeding.
+
+        Args:
+            blueprint_uuid: the UUID of the blueprint to update
+            data: Complete blueprint data formatted according to CreateBlueprintRequest from get_openapi
+
+        Returns:
+            The response from the image-builder API
+        """
+        try:
+            client = self.get_client(get_http_headers())
+        except ValueError as e:
+            return self.no_auth_error(e)
+
+        try:
+            if os.environ.get("IMAGE_BUILDER_MCP_DISABLE_DESCRIPTION_WATERMARK", "").lower() != "true":
+                if all(wmark not in data.get("description", "") for wmark in [WATERMARK_CREATED, WATERMARK_UPDATED]):
+                    desc_parts = [data.get("description", ""), WATERMARK_UPDATED]
+                    data["description"] = "\n".join(filter(None, desc_parts))
+            response = client.make_request(
+                f"blueprints/{blueprint_uuid}", method="PUT", data=data)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return f"Error: {str(e)}"
+
+        return f"Blueprint updated successfully: {response}"
 
     def get_blueprint_url(self, client: ImageBuilderClient, blueprint_id: str) -> str:
         """Get the URL for a blueprint."""
