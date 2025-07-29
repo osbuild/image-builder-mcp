@@ -48,7 +48,6 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
 
         self.logger = logging.getLogger("ImageBuilderMCP")
 
-        # could be used once we have e.g. "/distributions" available without authentication
         self.client_noauth = ImageBuilderClient(
             client_id=None,
             client_secret=None,
@@ -57,40 +56,6 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
             image_builder_mcp_client_id=self.image_builder_mcp_client_id,
             oauth_enabled=self.oauth_enabled
         )
-
-        # use dynamic attributes to get the distributions, architectures and image types
-        # once the API is changed to un-authenticated access
-        # self.distributions = self.client_noauth.make_request("distributions")
-        self.distributions = [
-            {'description': 'CentOS Stream 9', 'name': 'centos-9'},
-            {'description': 'CentOS Stream 10', 'name': 'centos-10'},
-            {'description': 'Fedora Linux 37', 'name': 'fedora-37'},
-            {'description': 'Fedora Linux 38', 'name': 'fedora-38'},
-            {'description': 'Fedora Linux 39', 'name': 'fedora-39'},
-            {'description': 'Fedora Linux 40', 'name': 'fedora-40'},
-            {'description': 'Fedora Linux 41', 'name': 'fedora-41'},
-            {'description': 'Fedora Linux 42', 'name': 'fedora-42'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 10 Beta', 'name': 'rhel-10-beta'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 10', 'name': 'rhel-10.0'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 10', 'name': 'rhel-10'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8.10'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8', 'name': 'rhel-8'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8.4', 'name': 'rhel-84'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8.5', 'name': 'rhel-85'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8.6', 'name': 'rhel-86'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8.7', 'name': 'rhel-87'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8.8', 'name': 'rhel-88'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 8.9', 'name': 'rhel-89'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9 beta', 'name': 'rhel-9-beta'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9', 'name': 'rhel-9'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9.0', 'name': 'rhel-90'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9.1', 'name': 'rhel-91'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9.2', 'name': 'rhel-92'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9.3', 'name': 'rhel-93'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9.4', 'name': 'rhel-94'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9.5', 'name': 'rhel-95'},
-            {'description': 'Red Hat Enterprise Linux (RHEL) 9.6', 'name': 'rhel-9.6'},
-        ]
 
         try:
             # TBD: change openapi spec to have a proper schema-enum
@@ -116,7 +81,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
         You can build images for multiple Linux distributions including:
         - Red Hat Enterprise Linux (RHEL)
         - CentOS Stream
-        - Fedora Linux
+        - Fedora Linux (not an official version, only similar to upstream)
 
         You create various image formats suitable for:
         - Cloud deployments (AWS, Azure, GCP)
@@ -199,8 +164,8 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
                           self.get_blueprint_details,
                           self.get_composes,
                           self.get_compose_details,
-                          self.blueprint_compose
-                          # self.compose
+                          self.blueprint_compose,
+                          self.get_distributions
                           ]
 
         for f in tool_functions:
@@ -210,14 +175,36 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
                 openWorldHint=True
             )
             description_str = f.__doc__.format(
-                distributions=", ".join([d['name']
-                                        for d in self.distributions]),
                 architectures=", ".join(self.architectures),
                 image_types=", ".join(self.image_types)
             )
             tool.description = description_str
             tool.title = description_str.split("\n", 1)[0]
             self.add_tool(tool)
+
+    def get_distributions(self) -> str:
+        """Get the list of distributions available to build images with.
+
+        🟢 CALL IMMEDIATELY - No information gathering required.
+
+        Emphasize that there is support only for Red Hat Enterprise Linux (RHEL) images
+        and there only for the latest minor version of each major version.
+        Emphasize that Fedora images are "similar" to the upstream but no official versions!
+        Emphasize that CentOS Stream is not supported by Red Hat.
+
+        Returns:
+            List of distributions
+        """
+        try:
+            client = self.get_client(get_http_headers())
+        except ValueError as e:
+            return self.no_auth_error(e)
+
+        try:
+            distributions = client.make_request("distributions")
+            return json.dumps(distributions)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return f"Error getting distributions: {str(e)}"
 
     def get_client_id(self, headers: Dict[str, str]) -> str:
         """Get the client ID preferably from the headers."""
@@ -432,7 +419,7 @@ class ImageBuilderMCP(FastMCP):  # pylint: disable=too-many-instance-attributes
 
         INFORMATION YOU MUST COLLECT FROM THE USER BEFORE CALLING:
         1. Blueprint name ("What would you like to name your blueprint? or should I generate a name?")
-        2. Distribution ("Which distribution do you want? Available: {distributions}")
+        2. Distribution ("Which distribution do you want? call get_distributions to see the list of distributions")
         3. Architecture ("Which architecture? Available: {architectures}")
         4. Image type ("What image type do you need? Available: {image_types} or take guest-image as default")
         5. Username ("Do you want to create a custom user account? If so, what username?")
