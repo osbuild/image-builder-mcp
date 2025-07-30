@@ -1,6 +1,5 @@
 {
-  "cdx_version": "0.2",
-  "id": "com.redhat.console.image-builder",
+  "dxt_version": "0.2",
   "name": "image-builder-mcp",
   "display_name": "Image Builder MCP",
   "version": "---VERSION---",

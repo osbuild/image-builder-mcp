@@ -9,7 +9,7 @@ TAG ?= UNKNOWN
 
 build-claude-extension: ## Build the Claude extension
 	sed -i "s/---VERSION---/$(TAG)/g" claude_desktop/manifest.json
-	zip -j image-builder-$(TAG).cdx claude_desktop/*
+	zip -j image-builder-$(TAG).dxt claude_desktop/*
 	sed -i "s/$(TAG)/---VERSION---/g" claude_desktop/manifest.json
 
 lint: ## Run linting with pre-commit
