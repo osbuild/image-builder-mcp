@@ -163,7 +163,7 @@ then integrate:
 
 For Claude Desktop there is an extension file in the release section of the project.
 
-Just download the `image-builder-mcp*.cdx` file and add this in Claude Desktop with
+Just download the `image-builder-mcp*.dxt` file and add this in Claude Desktop with
 
 `Settings -> Extensions -> Advanced Extensions Settings -> Install Extension…`
 
